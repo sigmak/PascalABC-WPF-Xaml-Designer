@@ -56,7 +56,7 @@ type
 constructor Form1.Create;
 begin
   inherited Create;
-  Self.Text   := 'PascalABC-WPF-Xaml-Designer Ver 1.1.0';
+  Self.Text   := 'PascalABC-WPF-Xaml-Designer Ver 1.1.1';
   Self.Width  := 1500;
   Self.Height := 900;
 
@@ -112,14 +112,57 @@ begin
 end;
 
 // ─────────────────────────────────────────────
-// clr-namespace 커스텀 xmlns 속성 제거
+// clr-namespace 커스텀 xmlns 제거 + 본문의 커스텀 prefix 사용도 제거
+// 처리 순서:
+//   1) xmlns:xx="clr-namespace:..." 속성 목록 수집
+//   2) 해당 prefix를 사용하는 엘리먼트 태그 전체 제거  (<vm:Foo .../>  <vm:Foo>...</vm:Foo>)
+//   3) 해당 prefix를 사용하는 속성값/Converter 참조 제거
+//   4) xmlns 선언 자체 제거
 function Form1.StripCustomNamespaces(xaml: string): string;
+var
+  prefixes : System.Collections.Generic.List<string>;
+  m        : System.Text.RegularExpressions.Match;
+  re       : System.Text.RegularExpressions.Regex;
+  prefix   : string;
+  pattern  : string;
+  s        : string;
 begin
-  Result := System.Text.RegularExpressions.Regex.Replace(
-    xaml,
-    '\s+xmlns:\w+="clr-namespace:[^"]*"',
-    ''
-  );
+  s        := xaml;
+  prefixes := new System.Collections.Generic.List<string>();
+
+  // ① clr-namespace xmlns 선언에서 prefix 목록 수집
+  re := new System.Text.RegularExpressions.Regex(
+    'xmlns:(\w+)="clr-namespace:[^"]*"');
+  m := re.Match(s);
+  while m.Success do
+  begin
+    prefixes.Add(m.Groups[1].Value);
+    m := m.NextMatch();
+  end;
+
+  // ② 각 prefix에 대해 본문 사용 제거
+  foreach prefix in prefixes do
+  begin
+    // 2-a) 자기완결 엘리먼트 제거: <prefix:Foo ... />
+    pattern := '<' + prefix + ':[^>]*/>';
+    s := System.Text.RegularExpressions.Regex.Replace(s, pattern, '');
+
+    // 2-b) 시작+끝 태그 쌍 제거: <prefix:Foo ...>...</prefix:Foo>
+    pattern := '<' + prefix + ':[^>]*>[\s\S]*?</' + prefix + ':[^>]*>';
+    s := System.Text.RegularExpressions.Regex.Replace(s, pattern, '');
+
+    // 2-c) 속성값에 사용된 커스텀 타입 참조 제거
+    //      예) Converter={StaticResource FileSizeConverter}  → 속성 전체 제거
+    //          {x:Type prefix:Foo}  → 빈 문자열
+    pattern := '\s+\w[\w.]*="\{[^"]*' + prefix + ':[^"]*\}"';
+    s := System.Text.RegularExpressions.Regex.Replace(s, pattern, '');
+
+    // 2-d) xmlns 선언 제거
+    pattern := '\s+xmlns:' + prefix + '="clr-namespace:[^"]*"';
+    s := System.Text.RegularExpressions.Regex.Replace(s, pattern, '');
+  end;
+
+  Result := s;
 end;
 
 // ─────────────────────────────────────────────
@@ -512,7 +555,6 @@ begin
 end;
 
 // ─────────────────────────────────────────────
-// 저장
 procedure Form1.OnSave(sender: System.Object; e: System.EventArgs);
 var
   dlg : System.Windows.Forms.SaveFileDialog;
@@ -566,13 +608,9 @@ begin
   if xaml.Contains('<Window ') or xaml.Contains('<UserControl ') then
   begin
     try
-      // ① clr-namespace 커스텀 xmlns 속성 제거
-      //    (vm:, conv: 등 외부 어셈블리 참조 → 디자이너가 resolve 불가)
-      cleanedXaml := System.Text.RegularExpressions.Regex.Replace(
-        xaml,
-        '\s+xmlns:\w+="clr-namespace:[^"]*"',
-        ''
-      );
+      // ① clr-namespace prefix 선언 및 본문 사용 전체 제거
+      //    (vm:, conv: 등 xmlns 선언 + 해당 prefix 엘리먼트/속성 참조 모두 제거)
+      cleanedXaml := StripCustomNamespaces(xaml);
 
       doc := new System.Xml.XmlDocument();
       doc.LoadXml(cleanedXaml);
@@ -658,7 +696,7 @@ procedure Form1.OnAbout(sender: System.Object; e: System.EventArgs);
 begin
   System.Windows.Forms.MessageBox.Show(
     'PascalABC-WPF-Xaml-Designer' + System.Environment.NewLine +
-    'Ver 1.1.0' + System.Environment.NewLine + System.Environment.NewLine +
+    'Ver 1.1.1' + System.Environment.NewLine + System.Environment.NewLine +
     'ICSharpCode.WpfDesign.Designer' + System.Environment.NewLine +
     'ICSharpCode.WpfDesign' + System.Environment.NewLine +
     'ICSharpCode.WpfDesign.XamlDom' + System.Environment.NewLine +

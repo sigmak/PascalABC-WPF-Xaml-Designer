@@ -59,7 +59,7 @@ type
 constructor Form1.Create;
 begin
   inherited Create;
-  Self.Text   := 'PascalABC-WPF-Xaml-Designer Ver 1.0.1';
+  Self.Text   := 'PascalABC-WPF-Xaml-Designer Ver 1.0.2';
   Self.Width  := 1500;
   Self.Height := 900;
 
@@ -325,12 +325,12 @@ end;
 // XAML 로드 - 인덴트 포맷 적용
 procedure Form1.LoadXaml(xaml: string);
 var
-  strReader: System.IO.StringReader;
-  xmlReader: System.Xml.XmlReader;
-  settings : ICSharpCode.WpfDesign.Designer.Xaml.XamlLoadSettings;
-  sw : System.IO.StringWriter;
-  //xtw: System.Xml.XmlTextWriter;
-  xw : System.Xml.XmlWriter;
+  strReader : System.IO.StringReader;
+  xmlReader : System.Xml.XmlReader;
+  settings  : ICSharpCode.WpfDesign.Designer.Xaml.XamlLoadSettings;
+  sw        : System.IO.StringWriter;
+  xwSettings: System.Xml.XmlWriterSettings;
+  xw        : System.Xml.XmlWriter;
 begin
   fSurface  := new ICSharpCode.WpfDesign.Designer.DesignSurface();
   settings  := new ICSharpCode.WpfDesign.Designer.Xaml.XamlLoadSettings();
@@ -340,19 +340,13 @@ begin
 
   hostDesign.Child := fSurface;
 
-  // ▼ SaveDesigner로 인덴트 적용된 XAML을 에디터에 표시
-  sw  := new System.IO.StringWriter();
-  //xtw := new System.Xml.XmlTextWriter(sw);
-  //xtw.Formatting  := System.Xml.Formatting.Indented;
-  //xtw.Indentation := 2;
-  //fSurface.SaveDesigner(xtw);
-  //xtw.Flush();
-   xw := new System.Xml.XmlTextWriter(sw);  // XmlTextWriter로 생성
-  //(xw as System.Xml.XmlTextWriter).Formatting := System.Xml.Formatting.Indented;
+  sw         := new System.IO.StringWriter();
+  xwSettings := new System.Xml.XmlWriterSettings();
+  xwSettings.Indent      := true;
+  xwSettings.IndentChars := '  ';
+  xw := System.Xml.XmlWriter.Create(sw, xwSettings);
   fSurface.SaveDesigner(xw);
- 
-  
-  
+  xw.Flush();
   txtXaml.Text := sw.ToString();
 end;
 
@@ -376,9 +370,10 @@ end;
 // B. 저장
 procedure Form1.OnSave(sender: System.Object; e: System.EventArgs);
 var
-  dlg: System.Windows.Forms.SaveFileDialog;
-  sw : System.IO.StringWriter;
-  xw : System.Xml.XmlWriter;  // XmlWriter로 선언
+  dlg       : System.Windows.Forms.SaveFileDialog;
+  sw        : System.IO.StringWriter;
+  xwSettings: System.Xml.XmlWriterSettings;
+  xw        : System.Xml.XmlWriter;
 begin
   if fSurface.DesignContext = nil then exit;
   dlg          := new System.Windows.Forms.SaveFileDialog();
@@ -386,10 +381,13 @@ begin
   dlg.FileName := 'design.xaml';
   if dlg.ShowDialog() = System.Windows.Forms.DialogResult.OK then
   begin
-    sw            := new System.IO.StringWriter();
-    xw            := new System.Xml.XmlTextWriter(sw);  // XmlTextWriter로 생성
-    (xw as System.Xml.XmlTextWriter).Formatting := System.Xml.Formatting.Indented;
+    sw         := new System.IO.StringWriter();
+    xwSettings := new System.Xml.XmlWriterSettings();
+    xwSettings.Indent      := true;
+    xwSettings.IndentChars := '  ';
+    xw := System.Xml.XmlWriter.Create(sw, xwSettings);
     fSurface.SaveDesigner(xw);
+    xw.Flush();
     System.IO.File.WriteAllText(dlg.FileName, sw.ToString());
     System.Windows.Forms.MessageBox.Show('저장 완료: ' + dlg.FileName);
   end;
@@ -464,14 +462,18 @@ end;
 // C. 디자이너 → XAML 텍스트 동기화 (메뉴)
 procedure Form1.OnSyncXamlMenu(sender: System.Object; e: System.EventArgs);
 var
-  sw : System.IO.StringWriter;
-  xw : System.Xml.XmlWriter;
+  sw        : System.IO.StringWriter;
+  xwSettings: System.Xml.XmlWriterSettings;
+  xw        : System.Xml.XmlWriter;
 begin
   if fSurface.DesignContext = nil then exit;
-  sw            := new System.IO.StringWriter();
-  xw            := new System.Xml.XmlTextWriter(sw);  // XmlTextWriter로 생성
+  sw         := new System.IO.StringWriter();
+  xwSettings := new System.Xml.XmlWriterSettings();
+  xwSettings.Indent      := true;
+  xwSettings.IndentChars := '  ';
+  xw := System.Xml.XmlWriter.Create(sw, xwSettings);
   fSurface.SaveDesigner(xw);
-  
+  xw.Flush();
   txtXaml.Text := sw.ToString();
 end;
 // Help > About
@@ -479,7 +481,7 @@ procedure Form1.OnAbout(sender: System.Object; e: System.EventArgs);
 begin
   System.Windows.Forms.MessageBox.Show(
     'PascalABC-WPF-Xaml-Designer' + System.Environment.NewLine +
-    'Ver 1.0.1' + System.Environment.NewLine + System.Environment.NewLine +
+    'Ver 1.0.2' + System.Environment.NewLine + System.Environment.NewLine +
     'ICSharpCode.WpfDesign.Designer' + System.Environment.NewLine +
     'ICSharpCode.WpfDesign' + System.Environment.NewLine +
     'ICSharpCode.WpfDesign.XamlDom' + System.Environment.NewLine +

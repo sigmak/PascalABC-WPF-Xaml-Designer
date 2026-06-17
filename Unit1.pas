@@ -9,7 +9,9 @@
 {$reference WindowsFormsIntegration.dll}
 
 uses
-  System.Windows.Forms;
+  System.Windows.Forms,
+  System.Collections.Generic,
+  ICSharpCode.WpfDesign;
 
 type
   Form1 = class(System.Windows.Forms.Form)
@@ -30,7 +32,7 @@ type
     procedure BuildToolbox;
     procedure BuildLayout;
     procedure ConnectEvents;
-    procedure AddToolboxButton(name: string; typeName: string);  // ← 클래스 메서드로
+
     procedure OnToolboxClick(sender: System.Object; e: System.Windows.RoutedEventArgs); // ← 별도 핸들러
     // 선언부에서 시그니처 변경
     procedure OnSelectionChanged(sender: System.Object; e: ICSharpCode.WpfDesign.DesignItemCollectionEventArgs);
@@ -45,6 +47,7 @@ type
     procedure LoadXaml(xaml: string);
     procedure SyncXamlEditor;
     function  SaveDesignerToString: string;
+    function  StripCustomNamespaces(xaml: string): string;
   public
     constructor Create;
   end;
@@ -53,15 +56,15 @@ type
 constructor Form1.Create;
 begin
   inherited Create;
-  Self.Text   := 'PascalABC-WPF-Xaml-Designer Ver 1.0.3';
+  Self.Text   := 'PascalABC-WPF-Xaml-Designer Ver 1.1.0';
   Self.Width  := 1500;
   Self.Height := 900;
 
   ICSharpCode.WpfDesign.Designer.BasicMetadata.Register();
 
-  BuildMenu;
   BuildToolbox;
   BuildLayout;
+  BuildMenu;
 
   LoadXaml(
     '<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"' +
@@ -109,6 +112,17 @@ begin
 end;
 
 // ─────────────────────────────────────────────
+// clr-namespace 커스텀 xmlns 속성 제거
+function Form1.StripCustomNamespaces(xaml: string): string;
+begin
+  Result := System.Text.RegularExpressions.Regex.Replace(
+    xaml,
+    '\s+xmlns:\w+="clr-namespace:[^"]*"',
+    ''
+  );
+end;
+
+// ─────────────────────────────────────────────
 // A. 메뉴바 (저장/열기/동기화)
 procedure Form1.BuildMenu;
 var
@@ -145,43 +159,137 @@ begin
 end;
 
 // ─────────────────────────────────────────────
-// A. 왼쪽 Toolbox 패널
+// 왼쪽 Toolbox (Expander 버전)
 procedure Form1.BuildToolbox;
 var
-  scroll: System.Windows.Controls.ScrollViewer;
-  title : System.Windows.Controls.TextBlock;
+  scroll      : System.Windows.Controls.ScrollViewer;
+  title       : System.Windows.Controls.TextBlock;
+  expLayout   : System.Windows.Controls.Expander;
+  expCommon   : System.Windows.Controls.Expander;
+  panelLayout : System.Windows.Controls.StackPanel;
+  panelCommon : System.Windows.Controls.StackPanel;
+
+  procedure AddBtn(panel: System.Windows.Controls.StackPanel;
+                   name: string; typeName: string);
+  var
+    btn : System.Windows.Controls.Button;
+    sp  : System.Windows.Controls.StackPanel;
+    icon: System.Windows.Controls.TextBlock;
+    lbl : System.Windows.Controls.TextBlock;
+  begin
+    sp             := new System.Windows.Controls.StackPanel();
+    sp.Orientation := System.Windows.Controls.Orientation.Horizontal;
+
+    icon                   := new System.Windows.Controls.TextBlock();
+    icon.FontFamily        := new System.Windows.Media.FontFamily('Segoe UI Symbol');
+    icon.FontSize          := 13;
+    icon.Width             := 20;
+    icon.TextAlignment     := System.Windows.TextAlignment.Center;
+    icon.VerticalAlignment := System.Windows.VerticalAlignment.Center;
+    icon.Margin            := new System.Windows.Thickness(2, 0, 4, 0);
+    case name of
+      'Grid'        : icon.Text := '▦';
+      'StackPanel'  : icon.Text := '☰';
+      'Canvas'      : icon.Text := '▭';
+      'DockPanel'   : icon.Text := '⊞';
+      'Button'      : icon.Text := '⬜';
+      'TextBox'     : icon.Text := '▤';
+      'Label'       : icon.Text := 'A';
+      'CheckBox'    : icon.Text := '☑';
+      'ComboBox'    : icon.Text := '⊟';
+      'ListBox'     : icon.Text := '≡';
+      'Image'       : icon.Text := '▨';
+      'TextBlock'   : icon.Text := 'T';
+      'Slider'      : icon.Text := '⊸';
+      'ProgressBar' : icon.Text := '▬';
+      'RadioButton' : icon.Text := '◎';
+      'Border'      : icon.Text := '▢';
+    else
+      icon.Text := '◆';
+    end;
+
+    lbl                   := new System.Windows.Controls.TextBlock();
+    lbl.Text              := name;
+    lbl.FontSize          := 12;
+    lbl.VerticalAlignment := System.Windows.VerticalAlignment.Center;
+
+    sp.Children.Add(icon);
+    sp.Children.Add(lbl);
+
+    btn                            := new System.Windows.Controls.Button();
+    btn.Content                    := sp;
+    btn.Tag                        := typeName;
+    btn.Margin                     := new System.Windows.Thickness(1);
+    btn.Padding                    := new System.Windows.Thickness(4, 3, 4, 3);
+    btn.HorizontalAlignment        := System.Windows.HorizontalAlignment.Stretch;
+    btn.HorizontalContentAlignment := System.Windows.HorizontalAlignment.Left;
+    btn.BorderThickness            := new System.Windows.Thickness(0);
+    btn.Background                 := System.Windows.Media.Brushes.Transparent;
+    btn.Click                      += OnToolboxClick;
+    panel.Children.Add(btn);
+  end;
+
+  function MakeExpander(header: string): System.Windows.Controls.Expander;
+  var
+    exp: System.Windows.Controls.Expander;
+    hdr: System.Windows.Controls.TextBlock;
+  begin
+    hdr            := new System.Windows.Controls.TextBlock();
+    hdr.Text       := header;
+    hdr.FontWeight := System.Windows.FontWeights.Bold;
+    hdr.FontSize   := 12;
+    hdr.Foreground := new System.Windows.Media.SolidColorBrush(
+      System.Windows.Media.Color.FromRgb(30, 30, 30));
+
+    exp            := new System.Windows.Controls.Expander();
+    exp.Header     := hdr;
+    exp.IsExpanded := true;
+    exp.Margin     := new System.Windows.Thickness(0, 2, 0, 2);
+    Result         := exp;
+  end;
+
 begin
   fToolboxPanel            := new System.Windows.Controls.StackPanel();
-  fToolboxPanel.Background := System.Windows.Media.Brushes.WhiteSmoke;
+  fToolboxPanel.Background := System.Windows.Media.Brushes.White;
 
   title            := new System.Windows.Controls.TextBlock();
-  title.Text       := '■ Toolbox';
+  title.Text       := '도구 상자';
+  title.FontSize   := 13;
   title.FontWeight := System.Windows.FontWeights.Bold;
-  title.Margin     := new System.Windows.Thickness(4);
+  title.Padding    := new System.Windows.Thickness(6);
+  title.Background := new System.Windows.Media.SolidColorBrush(
+    System.Windows.Media.Color.FromRgb(240, 240, 240));
   fToolboxPanel.Children.Add(title);
-  fToolboxPanel.Children.Add(new System.Windows.Controls.Separator());
 
-  // 레이아웃 컨트롤 (어셈블리 한정자 제거 - AppDomain 전체 검색)
-  AddToolboxButton('Grid',       'System.Windows.Controls.Grid');
-  AddToolboxButton('StackPanel', 'System.Windows.Controls.StackPanel');
-  AddToolboxButton('Canvas',     'System.Windows.Controls.Canvas');
-  AddToolboxButton('DockPanel',  'System.Windows.Controls.DockPanel');
+  panelLayout        := new System.Windows.Controls.StackPanel();
+  panelLayout.Margin := new System.Windows.Thickness(8, 2, 0, 2);
+  AddBtn(panelLayout, 'Grid',       'System.Windows.Controls.Grid');
+  AddBtn(panelLayout, 'StackPanel', 'System.Windows.Controls.StackPanel');
+  AddBtn(panelLayout, 'Canvas',     'System.Windows.Controls.Canvas');
+  AddBtn(panelLayout, 'DockPanel',  'System.Windows.Controls.DockPanel');
 
-  fToolboxPanel.Children.Add(new System.Windows.Controls.Separator());
+  expLayout         := MakeExpander('레이아웃');
+  expLayout.Content := panelLayout;
+  fToolboxPanel.Children.Add(expLayout);
 
-  // 컨트롤
-  AddToolboxButton('Button',      'System.Windows.Controls.Button');
-  AddToolboxButton('TextBox',     'System.Windows.Controls.TextBox');
-  AddToolboxButton('Label',       'System.Windows.Controls.Label');
-  AddToolboxButton('CheckBox',    'System.Windows.Controls.CheckBox');
-  AddToolboxButton('ComboBox',    'System.Windows.Controls.ComboBox');
-  AddToolboxButton('ListBox',     'System.Windows.Controls.ListBox');
-  AddToolboxButton('Image',       'System.Windows.Controls.Image');
-  AddToolboxButton('TextBlock',   'System.Windows.Controls.TextBlock');
-  AddToolboxButton('Slider',      'System.Windows.Controls.Slider');
-  AddToolboxButton('ProgressBar', 'System.Windows.Controls.ProgressBar');
-  AddToolboxButton('RadioButton', 'System.Windows.Controls.RadioButton');
-  AddToolboxButton('Border',      'System.Windows.Controls.Border');
+  panelCommon        := new System.Windows.Controls.StackPanel();
+  panelCommon.Margin := new System.Windows.Thickness(8, 2, 0, 2);
+  AddBtn(panelCommon, 'Button',      'System.Windows.Controls.Button');
+  AddBtn(panelCommon, 'TextBox',     'System.Windows.Controls.TextBox');
+  AddBtn(panelCommon, 'Label',       'System.Windows.Controls.Label');
+  AddBtn(panelCommon, 'CheckBox',    'System.Windows.Controls.CheckBox');
+  AddBtn(panelCommon, 'ComboBox',    'System.Windows.Controls.ComboBox');
+  AddBtn(panelCommon, 'ListBox',     'System.Windows.Controls.ListBox');
+  AddBtn(panelCommon, 'Image',       'System.Windows.Controls.Image');
+  AddBtn(panelCommon, 'TextBlock',   'System.Windows.Controls.TextBlock');
+  AddBtn(panelCommon, 'Slider',      'System.Windows.Controls.Slider');
+  AddBtn(panelCommon, 'ProgressBar', 'System.Windows.Controls.ProgressBar');
+  AddBtn(panelCommon, 'RadioButton', 'System.Windows.Controls.RadioButton');
+  AddBtn(panelCommon, 'Border',      'System.Windows.Controls.Border');
+
+  expCommon         := MakeExpander('공용 컨트롤');
+  expCommon.Content := panelCommon;
+  fToolboxPanel.Children.Add(expCommon);
 
   scroll         := new System.Windows.Controls.ScrollViewer();
   scroll.Content := fToolboxPanel;
@@ -194,21 +302,6 @@ begin
 end;
 
 // ─────────────────────────────────────────────
-// 툴박스 버튼 추가
-procedure Form1.AddToolboxButton(name: string; typeName: string);
-var
-  btn: System.Windows.Controls.Button;
-begin
-  btn         := new System.Windows.Controls.Button();
-  btn.Content := name;
-  btn.Tag     := typeName;
-  btn.Margin  := new System.Windows.Thickness(2);
-  btn.HorizontalAlignment := System.Windows.HorizontalAlignment.Stretch;
-  btn.Click += OnToolboxClick;
-  fToolboxPanel.Children.Add(btn);
-end;
-
-// ─────────────────────────────────────────────
 // 툴박스 클릭 → 루트에 컨트롤 추가
 procedure Form1.OnToolboxClick(sender: System.Object; e: System.Windows.RoutedEventArgs);
 var
@@ -217,9 +310,8 @@ var
   inst     : System.Object;
   newItem  : ICSharpCode.WpfDesign.DesignItem;
   rootItem : ICSharpCode.WpfDesign.DesignItem;
-  //grp      : ICSharpCode.WpfDesign.DesignItemChangeGroup;
-  list     : System.Collections.Generic.List<ICSharpCode.WpfDesign.DesignItem>;
   childProp: ICSharpCode.WpfDesign.DesignItemProperty;
+  lst: List<DesignItem>;
 begin
   if fSurface.DesignContext = nil then exit;
 
@@ -264,11 +356,16 @@ begin
 
     grp.Commit();
 
-    // 추가된 컨트롤 선택
-    list := new System.Collections.Generic.List<ICSharpCode.WpfDesign.DesignItem>();
-    list.Add(newItem);
+    var arr := new ICSharpCode.WpfDesign.DesignItem[1];
+//    arr[0]  := newItem;
+//    services.Selection.SetSelectedComponents(arr);
+    lst := new List<DesignItem>;
+    
+    foreach var item in arr do
+      lst.Add(item);
+  
     services.Selection.SetSelectedComponents(
-      list as System.Collections.Generic.ICollection<ICSharpCode.WpfDesign.DesignItem>
+      ICollection&<DesignItem>(lst)
     );
 
     // XAML 에디터 즉시 동기화
@@ -284,7 +381,9 @@ end;
 // 레이아웃
 procedure Form1.BuildLayout;
 var
-  topPanel: System.Windows.Forms.TableLayoutPanel;
+  topPanel   : System.Windows.Forms.TableLayoutPanel;
+  mainPanel  : System.Windows.Forms.Panel;
+  bottomPanel: System.Windows.Forms.Panel;
 begin
   // PropertyGridView 생성
   fPropView := new ICSharpCode.WpfDesign.Designer.PropertyGrid.PropertyGridView();
@@ -327,7 +426,7 @@ begin
   btnApply.Height := 28;
   btnApply.Click  += OnApplyXaml;
 
-  var bottomPanel := new System.Windows.Forms.Panel();
+  bottomPanel := new System.Windows.Forms.Panel();
   bottomPanel.Dock := System.Windows.Forms.DockStyle.Fill;
   bottomPanel.Controls.Add(txtXaml);
   bottomPanel.Controls.Add(btnApply);
@@ -340,7 +439,11 @@ begin
   splitContainer.Panel1.Controls.Add(topPanel);
   splitContainer.Panel2.Controls.Add(bottomPanel);
 
-  Self.Controls.Add(splitContainer);
+  mainPanel      := new System.Windows.Forms.Panel();
+  mainPanel.Dock := System.Windows.Forms.DockStyle.Fill;
+  mainPanel.Controls.Add(splitContainer);
+
+  Self.Controls.Add(mainPanel);
 end;
 
 // ─────────────────────────────────────────────
@@ -350,13 +453,21 @@ var
   strReader: System.IO.StringReader;
   xmlReader: System.Xml.XmlReader;
   settings : ICSharpCode.WpfDesign.Designer.Xaml.XamlLoadSettings;
+  scroll   : System.Windows.Controls.ScrollViewer;
 begin
   fSurface  := new ICSharpCode.WpfDesign.Designer.DesignSurface();
   settings  := new ICSharpCode.WpfDesign.Designer.Xaml.XamlLoadSettings();
   strReader := new System.IO.StringReader(xaml);
   xmlReader := new System.Xml.XmlTextReader(strReader);
   fSurface.LoadDesigner(xmlReader, settings);
-  hostDesign.Child := fSurface;
+
+  scroll := new System.Windows.Controls.ScrollViewer();
+  scroll.HorizontalScrollBarVisibility :=
+    System.Windows.Controls.ScrollBarVisibility.Auto;
+  scroll.VerticalScrollBarVisibility :=
+    System.Windows.Controls.ScrollBarVisibility.Auto;
+  scroll.Content   := fSurface;
+  hostDesign.Child := scroll;
 
   ConnectEvents();
   SyncXamlEditor();
@@ -423,41 +534,94 @@ begin
 end;
 
 // ─────────────────────────────────────────────
-// 열기 - Window/UserControl 루트를 Grid로 변환
 procedure Form1.OnOpen(sender: System.Object; e: System.EventArgs);
 var
-  dlg  : System.Windows.Forms.OpenFileDialog;
-  xaml : string;
-  doc  : System.Xml.XmlDocument;
-  root : System.Xml.XmlElement;
-  inner: string;
+  dlg         : System.Windows.Forms.OpenFileDialog;
+  xaml        : string;
+  cleanedXaml : string;
+  doc         : System.Xml.XmlDocument;
+  root        : System.Xml.XmlElement;
+  nsMgr       : System.Xml.XmlNamespaceManager;
+  resNode     : System.Xml.XmlNode;
+  dcNode      : System.Xml.XmlNode;
+  resourcesXml: string;
+  inner       : string;
+  nodesToRemove: System.Collections.Generic.List<System.Xml.XmlNode>;
+  node        : System.Xml.XmlNode;
 begin
   dlg        := new System.Windows.Forms.OpenFileDialog();
   dlg.Filter := 'XAML 파일|*.xaml|모든 파일|*.*';
   if dlg.ShowDialog() <> System.Windows.Forms.DialogResult.OK then exit;
 
-  xaml := System.IO.File.ReadAllText(dlg.FileName);
+  try
+    xaml := System.IO.File.ReadAllText(dlg.FileName);
+  except
+    on ex: System.Exception do
+    begin
+      System.Windows.Forms.MessageBox.Show('파일 읽기 오류: ' + ex.Message);
+      exit;
+    end;
+  end;
 
-  // Window / UserControl 루트 → Grid로 변환
   if xaml.Contains('<Window ') or xaml.Contains('<UserControl ') then
   begin
     try
-      doc   := new System.Xml.XmlDocument();
-      doc.LoadXml(xaml);
-      root  := doc.DocumentElement;
+      // ① clr-namespace 커스텀 xmlns 속성 제거
+      //    (vm:, conv: 등 외부 어셈블리 참조 → 디자이너가 resolve 불가)
+      cleanedXaml := System.Text.RegularExpressions.Regex.Replace(
+        xaml,
+        '\s+xmlns:\w+="clr-namespace:[^"]*"',
+        ''
+      );
+
+      doc := new System.Xml.XmlDocument();
+      doc.LoadXml(cleanedXaml);
+      root := doc.DocumentElement;
+
+      nsMgr := new System.Xml.XmlNamespaceManager(doc.NameTable);
+      nsMgr.AddNamespace('wpf',
+        'http://schemas.microsoft.com/winfx/2006/xaml/presentation');
+
+      // ② Window.Resources → Grid.Resources 로 이식
+      resNode      := root.SelectSingleNode('wpf:Window.Resources', nsMgr);
+      resourcesXml := '';
+      if resNode <> nil then
+      begin
+        resourcesXml := '<Grid.Resources>' + resNode.InnerXml + '</Grid.Resources>';
+      end;
+
+      // ③ 디자이너에서 처리 불가한 노드 제거
+      //    Window.DataContext, Window.Resources, Window.Style 등
+      nodesToRemove := new System.Collections.Generic.List<System.Xml.XmlNode>();
+      foreach node in root.ChildNodes do
+      begin
+        var localName := node.LocalName;
+        if localName.StartsWith('Window.') or localName.StartsWith('UserControl.') then
+          nodesToRemove.Add(node);
+      end;
+      foreach node in nodesToRemove do
+        root.RemoveChild(node);
+
       inner := root.InnerXml;
-      xaml  :=
+
+      xaml :=
         '<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"' +
         '      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">' +
-        inner + '</Grid>';
+        resourcesXml +
+        inner +
+        '</Grid>';
+
       System.Windows.Forms.MessageBox.Show(
-        'Window/UserControl 루트를 Grid로 변환하여 로드합니다.',
-        '알림', System.Windows.Forms.MessageBoxButtons.OK,
+        'Window/UserControl 루트를 Grid로 변환하여 로드합니다.' + #13#10 +
+        '(커스텀 네임스페이스 및 DataContext는 디자이너에서 제외됩니다.)',
+        '알림',
+        System.Windows.Forms.MessageBoxButtons.OK,
         System.Windows.Forms.MessageBoxIcon.Information);
+
     except
       on ex: System.Exception do
       begin
-        System.Windows.Forms.MessageBox.Show('XAML 변환 오류: ' + ex.Message);
+        System.Windows.Forms.MessageBox.Show('XAML 전처리 오류: ' + ex.Message);
         exit;
       end;
     end;
@@ -494,7 +658,7 @@ procedure Form1.OnAbout(sender: System.Object; e: System.EventArgs);
 begin
   System.Windows.Forms.MessageBox.Show(
     'PascalABC-WPF-Xaml-Designer' + System.Environment.NewLine +
-    'Ver 1.0.3' + System.Environment.NewLine + System.Environment.NewLine +
+    'Ver 1.1.0' + System.Environment.NewLine + System.Environment.NewLine +
     'ICSharpCode.WpfDesign.Designer' + System.Environment.NewLine +
     'ICSharpCode.WpfDesign' + System.Environment.NewLine +
     'ICSharpCode.WpfDesign.XamlDom' + System.Environment.NewLine +

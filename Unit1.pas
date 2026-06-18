@@ -92,6 +92,7 @@ type
     // 빌드 메뉴
     procedure OnBuild(sender: System.Object; e: System.EventArgs);
     procedure OnRun(sender: System.Object; e: System.EventArgs);
+    function  FindPabcCompiler: string;
 
     // 폴딩
     procedure UpdateFolding;
@@ -121,7 +122,7 @@ type
 constructor Form1.Create;
 begin
   inherited Create;
-  Self.Text   := 'PascalABC-WPF-Xaml-Designer Ver 1.2.0';
+  Self.Text   := 'PascalABC-WPF-Xaml-Designer Ver 1.2.1';
   Self.Width  := 1600;
   Self.Height := 950;
 
@@ -344,7 +345,67 @@ begin
 end;
 
 // ═════════════════════════════════════════════
-// 빌드: XAML + PAS 저장 → pabcnetc.exe 컴파일
+// pabcnetc.exe 경로 탐색
+function Form1.FindPabcCompiler: string;
+var
+  candidates: array of string;
+  path      : string;
+  regPath   : string;
+begin
+  Result := '';
+
+  // 1) 레지스트리에서 설치 경로 확인
+  try
+    regPath := System.Convert.ToString(
+      Microsoft.Win32.Registry.GetValue(
+        'HKEY_LOCAL_MACHINE\SOFTWARE\PascalABC.NET',
+        'InstallDir', ''));
+    if (regPath <> '') and
+       System.IO.File.Exists(regPath + '\pabcnetc.exe') then
+    begin
+      Result := regPath + '\pabcnetc.exe';
+      exit;
+    end;
+  except
+  end;
+
+  // 2) 일반적인 설치 경로들 확인
+  candidates := [
+    'C:\Program Files\PascalABC.NET\pabcnetc.exe',
+    'C:\Program Files (x86)\PascalABC.NET\pabcnetc.exe',
+    System.Environment.GetFolderPath(
+      System.Environment.SpecialFolder.LocalApplicationData) +
+      '\PascalABC.NET\pabcnetc.exe',
+    System.AppDomain.CurrentDomain.BaseDirectory + 'pabcnetc.exe'
+  ];
+
+  foreach path in candidates do
+  begin
+    if System.IO.File.Exists(path) then
+    begin
+      Result := path;
+      exit;
+    end;
+  end;
+
+  // 3) PATH 환경변수에서 찾기 (where 명령 사용)
+  try
+    var psi := new System.Diagnostics.ProcessStartInfo();
+    psi.FileName               := 'where';
+    psi.Arguments              := 'pabcnetc.exe';
+    psi.UseShellExecute        := false;
+    psi.RedirectStandardOutput := true;
+    psi.CreateNoWindow         := true;
+    var proc := System.Diagnostics.Process.Start(psi);
+    var output := proc.StandardOutput.ReadToEnd().Trim();
+    proc.WaitForExit();
+    if (output <> '') and System.IO.File.Exists(output.Split([#13, #10])[0]) then
+      Result := output.Split([#13, #10])[0];
+  except
+  end;
+end;
+
+// ═════════════════════════════════════════════
 procedure Form1.OnBuild(sender: System.Object; e: System.EventArgs);
 var
   xamlPath: string;
@@ -352,6 +413,7 @@ var
   proc    : System.Diagnostics.Process;
   output  : string;
   psi     : System.Diagnostics.ProcessStartInfo;
+  compilerPath: string;
 begin
   xamlPath := fProjectPath + fXamlFileName;
   pasPath  := fProjectPath + fPasFileName;
@@ -364,9 +426,23 @@ begin
   System.IO.File.WriteAllText(pasPath, fCodeEditor.Text,
     System.Text.Encoding.UTF8);
 
+  compilerPath := FindPabcCompiler();
+  if compilerPath = '' then
+  begin
+    System.Windows.Forms.MessageBox.Show(
+      'pabcnetc.exe를 찾을 수 없습니다.' + #13#10 +
+      '아래 경로 중 하나를 직접 지정해주세요:' + #13#10 +
+      'C:\Program Files\PascalABC.NET\' + #13#10 +
+      '또는 PascalABC.NET IDE에서 빌드된 .exe 경로를 확인하세요.',
+      '컴파일러를 찾을 수 없음',
+      System.Windows.Forms.MessageBoxButtons.OK,
+      System.Windows.Forms.MessageBoxIcon.Warning);
+    exit;
+  end;
+
   // 3) pabcnetc.exe 로 컴파일
   psi                       := new System.Diagnostics.ProcessStartInfo();
-  psi.FileName              := 'pabcnetc.exe';
+  psi.FileName              := compilerPath;
   psi.Arguments             := '"' + pasPath + '"';
   psi.WorkingDirectory      := fProjectPath;
   psi.UseShellExecute       := false;
@@ -386,7 +462,7 @@ begin
     if proc.ExitCode = 0 then
     begin
       lvErrors.Items.Clear();
-      var item := new System.Windows.Forms.ListViewItem('빌드 성공');
+      var item := new System.Windows.Forms.ListViewItem('빌드 성공 (' + compilerPath + ')');
       item.SubItems.Add('');
       item.SubItems.Add('');
       item.ForeColor := System.Drawing.Color.Green;
@@ -400,9 +476,9 @@ begin
   except
     on ex: System.Exception do
       System.Windows.Forms.MessageBox.Show(
-        'pabcnetc.exe 를 찾을 수 없습니다.' + #13#10 +
-        'PascalABC.NET 설치 경로를 PATH에 추가하세요.' + #13#10 +
-        ex.Message, '빌드 오류',
+        '컴파일 실행 오류: ' + ex.Message + #13#10 +
+        '경로: ' + compilerPath,
+        '빌드 오류',
         System.Windows.Forms.MessageBoxButtons.OK,
         System.Windows.Forms.MessageBoxIcon.Error);
   end;
@@ -1411,7 +1487,7 @@ procedure Form1.OnAbout(sender: System.Object; e: System.EventArgs);
 begin
   System.Windows.Forms.MessageBox.Show(
     'PascalABC-WPF-Xaml-Designer' + System.Environment.NewLine +
-    'Ver 1.2.0' + System.Environment.NewLine + System.Environment.NewLine +
+    'Ver 1.2.1' + System.Environment.NewLine + System.Environment.NewLine +
     'ICSharpCode.WpfDesign.Designer' + System.Environment.NewLine +
     'ICSharpCode.WpfDesign' + System.Environment.NewLine +
     'ICSharpCode.WpfDesign.XamlDom' + System.Environment.NewLine +

@@ -27,6 +27,13 @@ type
     splitContainer: System.Windows.Forms.SplitContainer;
     txtXaml       : System.Windows.Forms.RichTextBox;
     btnApply      : System.Windows.Forms.Button;
+    lineNumPanel    : System.Windows.Forms.Panel;      // 라인번호 패널
+    editorTable     : System.Windows.Forms.TableLayoutPanel; // 에디터 영역 레이아웃
+    menuItemLineNum   : System.Windows.Forms.ToolStripMenuItem;
+    fShowLineNumbers  : boolean;                       // 라인번호 표시 여부
+    fHighlighting     : boolean;                       // 하이라이트 활성 여부
+    fInHighlight      : boolean;                       // 재진입 방지 플래그
+    menuItemHighlight : System.Windows.Forms.ToolStripMenuItem;
 
     procedure BuildMenu;
     procedure BuildToolbox;
@@ -42,6 +49,15 @@ type
     procedure OnApplyXaml(sender: System.Object; e: System.EventArgs);  // RoutedEventArgs → EventArgs    
     
     procedure OnSyncXamlMenu(sender: System.Object; e: System.EventArgs);  // 메뉴용 WinForms
+    procedure OnToggleLineNumbers(sender: System.Object; e: System.EventArgs);
+    procedure OnToggleHighlight(sender: System.Object; e: System.EventArgs);
+    procedure OnXamlVScroll(sender: System.Object; e: System.EventArgs);
+    procedure OnXamlTextChanged(sender: System.Object; e: System.EventArgs);
+    procedure ApplyHighlight;
+
+    procedure OnLineNumPaint(sender: System.Object; e: System.Windows.Forms.PaintEventArgs);
+    procedure UpdateLineNumbers;
+    procedure SyncLineNumberScroll;
     procedure OnAbout(sender: System.Object; e: System.EventArgs);
     
     procedure LoadXaml(xaml: string);
@@ -57,7 +73,7 @@ type
 constructor Form1.Create;
 begin
   inherited Create;
-  Self.Text   := 'PascalABC-WPF-Xaml-Designer Ver 1.1.2';
+  Self.Text   := 'PascalABC-WPF-Xaml-Designer Ver 1.1.3';
   Self.Width  := 1500;
   Self.Height := 900;
 
@@ -66,6 +82,9 @@ begin
   BuildToolbox;
   BuildLayout;
   BuildMenu;
+
+  fHighlighting  := true;   // 구문 강조 기본 활성
+  fInHighlight   := false;
 
   LoadXaml(
     '<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"' +
@@ -109,7 +128,10 @@ var
 begin
   s := SaveDesignerToString();
   if s <> '' then
+  begin
     txtXaml.Text := s;
+    ApplyHighlight();
+  end;
 end;
 
 // ─────────────────────────────────────────────
@@ -171,10 +193,12 @@ end;
 procedure Form1.BuildMenu;
 var
   fileMenu, saveItem, openItem, syncItem: System.Windows.Forms.ToolStripMenuItem;
+  viewMenu: System.Windows.Forms.ToolStripMenuItem;
   helpMenu, aboutItem: System.Windows.Forms.ToolStripMenuItem;
 begin
   menuStrip := new System.Windows.Forms.MenuStrip();
 
+  // ── 파일 메뉴 ──
   fileMenu := new System.Windows.Forms.ToolStripMenuItem('파일(&F)');
   openItem := new System.Windows.Forms.ToolStripMenuItem('열기(&O)');
   saveItem := new System.Windows.Forms.ToolStripMenuItem('저장(&S)');
@@ -189,6 +213,20 @@ begin
   fileMenu.DropDownItems.Add(new System.Windows.Forms.ToolStripSeparator());
   fileMenu.DropDownItems.Add(syncItem);
 
+  // ── 보기 메뉴 ──
+  viewMenu              := new System.Windows.Forms.ToolStripMenuItem('보기(&V)');
+  menuItemLineNum       := new System.Windows.Forms.ToolStripMenuItem('라인 번호 표시(&L)');
+  menuItemLineNum.CheckOnClick := true;
+  menuItemLineNum.Checked      := false;
+  menuItemLineNum.Click        += OnToggleLineNumbers;
+
+  menuItemHighlight     := new System.Windows.Forms.ToolStripMenuItem('구문 강조 표시(&H)');
+  menuItemHighlight.CheckOnClick := true;
+  menuItemHighlight.Checked      := true;   // 기본값: 활성
+  menuItemHighlight.Click        += OnToggleHighlight;
+
+  viewMenu.DropDownItems.Add(menuItemLineNum);
+  viewMenu.DropDownItems.Add(menuItemHighlight);
 
   // Help 메뉴
   helpMenu          := new System.Windows.Forms.ToolStripMenuItem('도움말(&H)');
@@ -197,6 +235,7 @@ begin
   helpMenu.DropDownItems.Add(aboutItem);
 
   menuStrip.Items.Add(fileMenu);
+  menuStrip.Items.Add(viewMenu);
   menuStrip.Items.Add(helpMenu);
   Self.Controls.Add(menuStrip);
   Self.MainMenuStrip := menuStrip;
@@ -427,7 +466,6 @@ procedure Form1.BuildLayout;
 var
   topPanel   : System.Windows.Forms.TableLayoutPanel;
   mainPanel  : System.Windows.Forms.Panel;
-  bottomPanel: System.Windows.Forms.Panel;
 begin
   // PropertyGridView 생성
   fPropView := new ICSharpCode.WpfDesign.Designer.PropertyGrid.PropertyGridView();
@@ -463,17 +501,44 @@ begin
   txtXaml.Dock       := System.Windows.Forms.DockStyle.Fill;
   txtXaml.ScrollBars := System.Windows.Forms.RichTextBoxScrollBars.Both;
   txtXaml.WordWrap   := false;
+  txtXaml.VScroll     += OnXamlVScroll;
+  txtXaml.TextChanged += OnXamlTextChanged;
 
+  // ── 라인번호 패널 (Paint 이벤트로 직접 그림) ──
+  lineNumPanel           := new System.Windows.Forms.Panel();
+  lineNumPanel.Dock      := System.Windows.Forms.DockStyle.Fill;
+  lineNumPanel.BackColor := System.Drawing.Color.FromArgb(240, 240, 240);
+  lineNumPanel.Visible   := true;
+  lineNumPanel.Paint     += OnLineNumPaint;
+
+  // ── 적용 버튼 ──
   btnApply        := new System.Windows.Forms.Button();
   btnApply.Text   := '▶ XAML 적용';
-  btnApply.Dock   := System.Windows.Forms.DockStyle.Bottom;
-  btnApply.Height := 28;
+  btnApply.Dock   := System.Windows.Forms.DockStyle.Fill;
   btnApply.Click  += OnApplyXaml;
 
-  bottomPanel := new System.Windows.Forms.Panel();
-  bottomPanel.Dock := System.Windows.Forms.DockStyle.Fill;
-  bottomPanel.Controls.Add(txtXaml);
-  bottomPanel.Controls.Add(btnApply);
+  // ── 에디터 영역 TableLayoutPanel ──
+  //   행0(Auto): 버튼
+  //   행1(*):    라인번호 | txtXaml
+  editorTable             := new System.Windows.Forms.TableLayoutPanel();
+  editorTable.Dock        := System.Windows.Forms.DockStyle.Fill;
+  editorTable.ColumnCount := 2;
+  editorTable.RowCount    := 2;
+  editorTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(
+    System.Windows.Forms.SizeType.Absolute, 0));   // 라인번호 열 (초기 숨김=0)
+  editorTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(
+    System.Windows.Forms.SizeType.Percent, 100));  // 에디터 열
+  editorTable.RowStyles.Add(new System.Windows.Forms.RowStyle(
+    System.Windows.Forms.SizeType.Absolute, 30));  // 버튼 행
+  editorTable.RowStyles.Add(new System.Windows.Forms.RowStyle(
+    System.Windows.Forms.SizeType.Percent, 100));  // 에디터 행
+  // 버튼: 열0~1 병합, 행0
+  editorTable.Controls.Add(btnApply, 0, 0);
+  editorTable.SetColumnSpan(btnApply, 2);
+  // 라인번호: 열0, 행1
+  editorTable.Controls.Add(lineNumPanel, 0, 1);
+  // 에디터: 열1, 행1
+  editorTable.Controls.Add(txtXaml, 1, 1);
 
   // SplitContainer: 위=디자이너 영역 / 아래=XAML 에디터
   splitContainer                  := new System.Windows.Forms.SplitContainer();
@@ -481,7 +546,7 @@ begin
   splitContainer.Orientation      := System.Windows.Forms.Orientation.Horizontal;
   splitContainer.SplitterDistance := 580;
   splitContainer.Panel1.Controls.Add(topPanel);
-  splitContainer.Panel2.Controls.Add(bottomPanel);
+  splitContainer.Panel2.Controls.Add(editorTable);
 
   mainPanel      := new System.Windows.Forms.Panel();
   mainPanel.Dock := System.Windows.Forms.DockStyle.Fill;
@@ -708,12 +773,236 @@ procedure Form1.OnSyncXamlMenu(sender: System.Object; e: System.EventArgs);
 begin
   SyncXamlEditor();
 end;
+
+// ─────────────────────────────────────────────
+procedure Form1.OnXamlVScroll(sender: System.Object; e: System.EventArgs);
+begin
+  SyncLineNumberScroll();
+end;
+
+// ─────────────────────────────────────────────
+procedure Form1.OnXamlTextChanged(sender: System.Object; e: System.EventArgs);
+begin
+  UpdateLineNumbers();
+  ApplyHighlight();
+end;
+
+// ─────────────────────────────────────────────
+// 라인번호 패널 Paint 이벤트 — 현재 스크롤 위치에 맞는 줄번호만 그림
+procedure Form1.OnLineNumPaint(sender: System.Object; e: System.Windows.Forms.PaintEventArgs);
+var
+  lineH       : integer;
+  firstVisible: integer;
+  lastVisible : integer;
+  totalLines  : integer;
+  i           : integer;
+  y           : integer;
+  numStr      : string;
+  brush       : System.Drawing.SolidBrush;
+  fmt         : System.Drawing.StringFormat;
+  rect        : System.Drawing.RectangleF;
+begin
+  lineH      := txtXaml.Font.Height + 1;
+  totalLines := txtXaml.Lines.Length;
+  if totalLines = 0 then totalLines := 1;
+
+  // 현재 첫 번째 가시 라인 인덱스
+  firstVisible := txtXaml.GetLineFromCharIndex(
+    txtXaml.GetCharIndexFromPosition(new System.Drawing.Point(0, 0))
+  );
+
+  // 마지막 가시 라인 인덱스 (패널 높이 기준)
+  lastVisible := firstVisible +
+    (lineNumPanel.Height div lineH) + 1;
+  if lastVisible >= totalLines then
+    lastVisible := totalLines - 1;
+
+  brush := new System.Drawing.SolidBrush(
+    System.Drawing.Color.FromArgb(120, 120, 120));
+  fmt             := new System.Drawing.StringFormat();
+  fmt.Alignment   := System.Drawing.StringAlignment.Far;   // 오른쪽 정렬
+  fmt.LineAlignment := System.Drawing.StringAlignment.Center;
+
+  e.Graphics.Clear(System.Drawing.Color.FromArgb(240, 240, 240));
+
+  for i := firstVisible to lastVisible do
+  begin
+    numStr := (i + 1).ToString();
+    y      := (i - firstVisible) * lineH;
+    rect   := new System.Drawing.RectangleF(
+      0, y, e.ClipRectangle.Width - 4, lineH);
+    e.Graphics.DrawString(numStr, txtXaml.Font, brush, rect, fmt);
+  end;
+
+  brush.Dispose();
+  fmt.Dispose();
+end;
+
+// ─────────────────────────────────────────────
+// 구문 강조 ON/OFF 토글
+procedure Form1.OnToggleHighlight(sender: System.Object; e: System.EventArgs);
+begin
+  fHighlighting := menuItemHighlight.Checked;
+  if fHighlighting then
+    ApplyHighlight()
+  else
+  begin
+    // 강조 해제: 전체 텍스트를 기본 색으로 복원
+    fInHighlight := true;
+    try
+      var sel := txtXaml.SelectionStart;
+      var len := txtXaml.SelectionLength;
+      txtXaml.SelectAll();
+      txtXaml.SelectionColor := System.Drawing.Color.Black;
+      txtXaml.SelectionStart  := sel;
+      txtXaml.SelectionLength := len;
+    finally
+      fInHighlight := false;
+    end;
+  end;
+end;
+
+// ─────────────────────────────────────────────
+// XAML 구문 강조 적용
+// 색상 체계:
+//   태그명        <Grid  </Grid>          → 파랑  (0,0,205)
+//   속성명        Width= Height=          → 빨강  (180,0,0)
+//   속성값        "100"  "Center"         → 남색  (0,0,139) + 이탤릭
+//   XML 선언/지시 <?xml ...?>             → 회색  (128,128,128)
+//   주석          <!-- ... -->            → 초록  (0,128,0)
+//   꺾쇠/슬래시   < > / =                → 진청  (0,70,180)
+procedure Form1.ApplyHighlight;
+var
+  text    : string;
+  selStart: integer;
+  selLen  : integer;
+
+  procedure Colorize(pattern: string; col: System.Drawing.Color;
+                     italic: boolean; grp: integer);
+  var
+    re: System.Text.RegularExpressions.Regex;
+    m : System.Text.RegularExpressions.Match;
+    s, l: integer;
+  begin
+    re := new System.Text.RegularExpressions.Regex(pattern);
+    m  := re.Match(text);
+    while m.Success do
+    begin
+      if grp = 0 then begin s := m.Index;          l := m.Length; end
+      else             begin s := m.Groups[grp].Index; l := m.Groups[grp].Length; end;
+      txtXaml.SelectionStart  := s;
+      txtXaml.SelectionLength := l;
+      txtXaml.SelectionColor  := col;
+      if italic then
+        txtXaml.SelectionFont := new System.Drawing.Font(
+          txtXaml.Font, System.Drawing.FontStyle.Italic)
+      else
+        txtXaml.SelectionFont := txtXaml.Font;
+      m := m.NextMatch();
+    end;
+  end;
+
+begin
+  if not fHighlighting then exit;
+  if fInHighlight then exit;
+  fInHighlight := true;
+  txtXaml.SuspendLayout();
+  try
+    text     := txtXaml.Text;
+    selStart := txtXaml.SelectionStart;
+    selLen   := txtXaml.SelectionLength;
+
+    // 전체를 기본 색(검정)으로 초기화
+    txtXaml.SelectAll();
+    txtXaml.SelectionColor := System.Drawing.Color.Black;
+    txtXaml.SelectionFont  := txtXaml.Font;
+
+    // ① 주석  <!-- ... -->  (가장 먼저 — 다른 규칙보다 우선)
+    Colorize('<!--[\s\S]*?-->', System.Drawing.Color.FromArgb(0, 128, 0), false, 0);
+
+    // ② XML 선언/처리 지시  <? ... ?>
+    Colorize('<\?[\s\S]*?\?>', System.Drawing.Color.FromArgb(128, 128, 128), false, 0);
+
+    // ③ 꺾쇠·슬래시  < > / (태그 구조 문자)
+    Colorize('[<>/]', System.Drawing.Color.FromArgb(0, 70, 180), false, 0);
+
+    // ④ 태그명  예) Grid  Button  Window.Resources
+    Colorize('</?([\w.:]+)', System.Drawing.Color.FromArgb(0, 0, 205), false, 1);
+
+    // ⑤ 속성명  예) Width=  x:Key=
+    Colorize('([\w:]+)=', System.Drawing.Color.FromArgb(180, 0, 0), false, 1);
+
+    // ⑥ 속성값  "..."  (이탤릭)
+    Colorize('"[^"]*"', System.Drawing.Color.FromArgb(0, 100, 0), true, 0);
+
+    // 커서 위치 복원
+    txtXaml.SelectionStart  := selStart;
+    txtXaml.SelectionLength := selLen;
+    txtXaml.SelectionColor  := System.Drawing.Color.Black;
+    txtXaml.SelectionFont   := txtXaml.Font;
+  finally
+    fInHighlight := false;
+    txtXaml.ResumeLayout();
+  end;
+end;
+
+// ─────────────────────────────────────────────
+// 라인번호 표시/숨기기 토글
+procedure Form1.OnToggleLineNumbers(sender: System.Object; e: System.EventArgs);
+begin
+  fShowLineNumbers := menuItemLineNum.Checked;
+  if fShowLineNumbers then
+  begin
+    // 라인번호 열 너비 복원 (자릿수에 맞게 UpdateLineNumbers 가 조정)
+    editorTable.ColumnStyles[0].SizeType := System.Windows.Forms.SizeType.Absolute;
+    editorTable.ColumnStyles[0].Width    := 40;
+    UpdateLineNumbers();
+  end
+  else
+  begin
+    // 라인번호 열 너비를 0 으로 축소해 숨김
+    editorTable.ColumnStyles[0].SizeType := System.Windows.Forms.SizeType.Absolute;
+    editorTable.ColumnStyles[0].Width    := 0;
+  end;
+end;
+
+// ─────────────────────────────────────────────
+// 라인번호 텍스트 갱신
+procedure Form1.UpdateLineNumbers;
+var
+  lineCount: integer;
+  digits   : integer;
+  colW     : integer;
+begin
+  if not fShowLineNumbers then exit;
+
+  lineCount := txtXaml.Lines.Length;
+  if lineCount = 0 then lineCount := 1;
+
+  // 자릿수에 따라 열 너비 자동 조정
+  digits := lineCount.ToString().Length;
+  colW   := 14 + digits * 8;
+  editorTable.ColumnStyles[0].SizeType := System.Windows.Forms.SizeType.Absolute;
+  editorTable.ColumnStyles[0].Width    := colW;
+
+  lineNumPanel.Invalidate();
+end;
+
+// ─────────────────────────────────────────────
+// txtXaml 스크롤 위치와 라인번호 스크롤 동기화
+procedure Form1.SyncLineNumberScroll;
+begin
+  if not fShowLineNumbers then exit;
+  // 스크롤 위치가 바뀌면 Paint 이벤트에서 현재 첫 가시 라인을 다시 계산해 그림
+  lineNumPanel.Invalidate();
+end;
+
 // Help > About
 procedure Form1.OnAbout(sender: System.Object; e: System.EventArgs);
 begin
   System.Windows.Forms.MessageBox.Show(
     'PascalABC-WPF-Xaml-Designer' + System.Environment.NewLine +
-    'Ver 1.1.2' + System.Environment.NewLine + System.Environment.NewLine +
+    'Ver 1.1.3' + System.Environment.NewLine + System.Environment.NewLine +
     'ICSharpCode.WpfDesign.Designer' + System.Environment.NewLine +
     'ICSharpCode.WpfDesign' + System.Environment.NewLine +
     'ICSharpCode.WpfDesign.XamlDom' + System.Environment.NewLine +

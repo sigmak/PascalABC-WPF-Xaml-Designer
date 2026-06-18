@@ -73,7 +73,7 @@ type
     procedure OnUndoStackChanged(sender: System.Object; e: System.EventArgs);
     procedure OnTabChanged(sender: System.Object; e: System.EventArgs);
     
-    procedure FormKeyDown(sender: Object; ke: System.Windows.Forms.KeyEventArgs);    
+    procedure FormKeyDown(sender: System.Object; ke: System.Windows.Forms.KeyEventArgs);    
 
     // 파일 메뉴
     procedure OnNewProject(sender: System.Object; e: System.EventArgs);
@@ -124,7 +124,7 @@ type
 constructor Form1.Create;
 begin
   inherited Create;
-  Self.Text   := 'PascalABC-WPF-Xaml-Designer Ver 1.2.3';
+  Self.Text   := 'PascalABC-WPF-Xaml-Designer Ver 1.2.4';
   Self.Width  := 1600;
   Self.Height := 950;
 
@@ -162,7 +162,7 @@ var
   sb: System.Text.StringBuilder;
 begin
   sb := new System.Text.StringBuilder();
-  sb.AppendLine('unit MainWindow;');
+  sb.AppendLine('unit MainUnit;');          // ← MainWindow → MainUnit
   sb.AppendLine('');
   sb.AppendLine('{$reference PresentationFramework.dll}');
   sb.AppendLine('{$reference PresentationCore.dll}');
@@ -181,13 +181,11 @@ begin
   sb.AppendLine('constructor MainWindow.Create;');
   sb.AppendLine('begin');
   sb.AppendLine('  inherited Create;');
-  sb.AppendLine('  // XAML 로드');
   sb.AppendLine('  System.Windows.Application.LoadComponent(');
   sb.AppendLine('    Self,');
-  //sb.AppendLine('    new System.Uri(''' + xamlFileName + ''', System.UriKind.Relative)');
   sb.AppendLine(
-    Format('    new System.Uri(''%s'', System.UriKind.Relative)',
-         xamlFileName)
+    System.String.Format('    new System.Uri(''{0}'', System.UriKind.Relative)',
+      [xamlFileName])
   );
   sb.AppendLine('  );');
   sb.AppendLine('end;');
@@ -408,77 +406,162 @@ begin
 end;
 
 // ═════════════════════════════════════════════
+// 빌드: bat 파일 경유, 단계별로 try/except를 분리해서
+// 예외 발생 시 즉시 ex.Message를 문자열로 캡처 → 이후 ex 객체를 다시 참조하지 않음
+// (ToString() 실패는 보통 예외 객체가 finally 블록 등에서 재사용/지연 평가될 때 발생)
 procedure Form1.OnBuild(sender: System.Object; e: System.EventArgs);
 var
   xamlPath: string;
   pasPath : string;
-  proc    : System.Diagnostics.Process;
   outputFile: string;
-  psi     : System.Diagnostics.ProcessStartInfo;
   compilerPath: string;
   tempBat : string;
+  output      : string;
+  exitCode    : integer;
+  hadError    : boolean;
+  errMsg      : string;
 begin
+  hadError := false;
+  errMsg   := '';
+  output   := '';
+  exitCode := -1;
+
   xamlPath := fProjectPath + fXamlFileName;
   pasPath  := fProjectPath + fPasFileName;
-
-  // 1) XAML 저장
-  System.IO.File.WriteAllText(xamlPath, fXamlEditor.Text, System.Text.Encoding.UTF8);
-
-  // 2) PAS 저장
-  System.IO.File.WriteAllText(pasPath, fCodeEditor.Text, System.Text.Encoding.UTF8);
-
-  compilerPath := FindPabcCompiler();
-  if compilerPath = '' then exit;
-
-  // 임시 bat 파일 만들어서 실행 결과 파일로 받기
-  tempBat := fProjectPath + 'build.bat';
+  tempBat    := fProjectPath + 'build.bat';
   outputFile := fProjectPath + 'build_output.txt';
+
   
-  var batContent := new System.Text.StringBuilder();
-  batContent.AppendLine('@echo off');
-  batContent.AppendLine('chcp 65001 > nul');
-  batContent.AppendLine('"' + compilerPath + '" "' + pasPath + '" > "' + outputFile + '" 2>&1');
-  System.IO.File.WriteAllText(tempBat, batContent.ToString(), System.Text.Encoding.Default);
-
-  // 3) pabcnetc.exe 로 컴파일
-  psi                       := new System.Diagnostics.ProcessStartInfo();
-  psi.FileName              := 'cmd.exe';
-  psi.Arguments             := '/c "' + tempBat + '"';
-  psi.WorkingDirectory      := fProjectPath;
-  psi.UseShellExecute       := false;
-  psi.CreateNoWindow        := true;
-  psi.WindowStyle := System.Diagnostics.ProcessWindowStyle.Hidden;
-
-  proc := new System.Diagnostics.Process();
-  proc.StartInfo := psi;
-
   try
-    try
-      proc.Start();
-      proc.WaitForExit();
-      
-      var output := '';
-      if System.IO.File.Exists(outputFile) then
-        output := System.IO.File.ReadAllText(outputFile, System.Text.Encoding.UTF8);
-  
-      if proc.ExitCode = 0 then
-      begin
-        lvErrors.Items.Clear();
-        var item := new System.Windows.Forms.ListViewItem('빌드 성공');
-        item.ForeColor := System.Drawing.Color.Green;
-        lvErrors.Items.Add(item);
-      end
-      else
-        ShowBuildErrors(output);
-        
-    except
-      on ex: System.Exception do
-        System.Windows.Forms.MessageBox.Show('컴파일 실행 오류: ' + ex.Message);
+    // 1) XAML파일 저장
+    System.IO.File.WriteAllText(xamlPath, fXamlEditor.Text, System.Text.Encoding.UTF8);
+    // 2) PAS 저장
+    System.IO.File.WriteAllText(pasPath,  fCodeEditor.Text, System.Text.Encoding.UTF8);
+  except
+    on ex: System.Exception do
+    begin
+      errMsg   := ex.Message;
+      hadError := true;
     end;
-  finally
-    if System.IO.File.Exists(tempBat) then System.IO.File.Delete(tempBat);
-    if System.IO.File.Exists(outputFile) then System.IO.File.Delete(outputFile);
   end;
+
+  if hadError then
+  begin
+    System.Windows.Forms.MessageBox.Show('파일 저장 오류: ' + errMsg);
+    exit;
+  end;
+
+  // 2) 컴파일러 경로 탐색
+  compilerPath := FindPabcCompiler();
+  System.Windows.Forms.MessageBox.Show('컴파일러 위치: ' + compilerPath);
+  if compilerPath = '' then
+  begin
+    System.Windows.Forms.MessageBox.Show(
+      'pabcnetc.exe를 찾을 수 없습니다.' + #13#10 +
+      'PascalABC.NET 설치 경로를 확인하세요.',
+      '컴파일러를 찾을 수 없음',
+      System.Windows.Forms.MessageBoxButtons.OK,
+      System.Windows.Forms.MessageBoxIcon.Warning);
+    exit;
+  end;
+
+// 3) bat 파일 생성 - 리디렉션 없이
+  try
+    var batContent := new System.Text.StringBuilder();
+    batContent.AppendLine('@echo off');
+    // > 리디렉션 완전 제거, 그냥 실행만
+    batContent.AppendLine('"' + compilerPath + '" "' + pasPath + '"');
+    batContent.AppendLine('exit %ERRORLEVEL%');
+    System.IO.File.WriteAllText(tempBat, batContent.ToString(),
+      System.Text.Encoding.Default);
+  except
+    on ex: System.Exception do
+    begin
+      errMsg   := ex.Message;
+      hadError := true;
+    end;
+  end;
+  if hadError then
+  begin
+    System.Windows.Forms.MessageBox.Show('빌드 스크립트 생성 오류: ' + errMsg);
+    exit;
+  end;
+
+  // 4) 빌드 프로세스 실행
+  try
+    var psi := new System.Diagnostics.ProcessStartInfo();
+    psi.FileName         := 'cmd.exe';
+    psi.Arguments        := '/c "' + tempBat + '"';
+    psi.WorkingDirectory := fProjectPath;
+    psi.UseShellExecute  := true;
+    psi.CreateNoWindow   := false;
+    psi.WindowStyle      := System.Diagnostics.ProcessWindowStyle.Normal;
+
+    var proc := new System.Diagnostics.Process();
+    proc.StartInfo := psi;
+    proc.Start();
+    proc.WaitForExit(60000);
+
+    if not proc.HasExited then
+    begin
+      try proc.Kill(); except end;
+      errMsg   := '컴파일 시간 초과 (60초)';
+      hadError := true;
+    end
+    else
+      exitCode := proc.ExitCode;
+  except
+    on ex: System.Exception do
+    begin
+      errMsg   := ex.Message;
+      hadError := true;
+    end;
+  end;
+
+  // 5) 출력 파일 읽기 - exe 존재 여부로 성공 판단
+  if not hadError then
+  begin
+    var exePath := fProjectPath +
+      System.IO.Path.GetFileNameWithoutExtension(fPasFileName) + '.exe';
+    if System.IO.File.Exists(exePath) then
+      exitCode := 0
+    else
+      exitCode := 1;
+    output := ''; // 출력을 캡처할 수 없으므로 비워둠
+  end;
+
+  // 6) 임시 파일 정리
+  try
+    if System.IO.File.Exists(tempBat) then System.IO.File.Delete(tempBat);
+  except
+  end;
+  
+
+  // 7) 결과 표시
+  if hadError then
+  begin
+    lvErrors.Items.Clear();
+    var item := new System.Windows.Forms.ListViewItem('빌드 실행 오류: ' + errMsg);
+    item.ForeColor := System.Drawing.Color.Red;
+    lvErrors.Items.Add(item);
+    System.Windows.Forms.MessageBox.Show('빌드 실행 중 오류가 발생했습니다: ' + errMsg);
+    exit;
+  end;
+
+  if exitCode = 0 then
+  begin
+    lvErrors.Items.Clear();
+    var item := new System.Windows.Forms.ListViewItem('빌드 성공');
+    item.SubItems.Add('');
+    item.SubItems.Add('');
+    item.ForeColor := System.Drawing.Color.Green;
+    lvErrors.Items.Add(item);
+    System.Windows.Forms.MessageBox.Show('빌드 성공!',
+      '빌드', System.Windows.Forms.MessageBoxButtons.OK,
+      System.Windows.Forms.MessageBoxIcon.Information);
+  end
+  else
+    ShowBuildErrors(output);
 end;
 
 // ═════════════════════════════════════════════
@@ -493,7 +576,14 @@ begin
     System.IO.Path.GetFileNameWithoutExtension(fPasFileName) + '.exe';
 
   if System.IO.File.Exists(exePath) then
-    System.Diagnostics.Process.Start(exePath)
+  begin
+    try
+      System.Diagnostics.Process.Start(exePath);
+    except
+      on ex: System.Exception do
+        System.Windows.Forms.MessageBox.Show('실행 오류: ' + ex.Message);
+    end;
+  end
   else
     System.Windows.Forms.MessageBox.Show(
       '빌드된 실행 파일을 찾을 수 없습니다: ' + exePath,
@@ -514,9 +604,9 @@ begin
   begin
     sb.Append(item.Text);
     sb.Append(#9);
-    sb.Append(item.SubItems[1].Text); // 줄
+    if item.SubItems.Count > 1 then sb.Append(item.SubItems[1].Text); // 줄
     sb.Append(#9);
-    sb.Append(item.SubItems[2].Text); // 파일
+    if item.SubItems.Count > 2 then sb.Append(item.SubItems[2].Text); // 파일
     sb.AppendLine();
   end;
   System.Windows.Forms.Clipboard.SetText(sb.ToString());
@@ -550,29 +640,41 @@ var
 begin
   lvErrors.Items.Clear();
 
-  // PascalABC.NET 오류 형식: FileName(Line) : Error message
-  re    := new System.Text.RegularExpressions.Regex(
-    '([^(]+)\((\d+)\)\s*:\s*(.+)');
-  lines := output.Split([#13, #10]);
-
-  foreach line in lines do
+  if output.Trim() = '' then
   begin
-    if line.Trim() = '' then continue;
-    m := re.Match(line.Trim());
-    if m.Success then
+    item := new System.Windows.Forms.ListViewItem(
+      '빌드가 실패했지만 출력 메시지가 없습니다. 컴파일러 경로/권한을 확인하세요.');
+    item.SubItems.Add('');
+    item.SubItems.Add('');
+    item.ForeColor := System.Drawing.Color.Red;
+    lvErrors.Items.Add(item);
+  end
+  else
+  begin
+    // PascalABC.NET 오류 형식: FileName(Line) : Error message
+    re    := new System.Text.RegularExpressions.Regex(
+      '([^(]+)\((\d+)\)\s*:\s*(.+)');
+    lines := output.Split([#13, #10]);
+
+    foreach line in lines do
     begin
-      item := new System.Windows.Forms.ListViewItem(m.Groups[3].Value); // 메시지
-      item.SubItems.Add(m.Groups[2].Value);  // 줄번호
-      item.SubItems.Add(m.Groups[1].Value);  // 파일명
-      item.ForeColor := System.Drawing.Color.Red;
-      lvErrors.Items.Add(item);
-    end
-    else if line.Trim() <> '' then
-    begin
-      item := new System.Windows.Forms.ListViewItem(line.Trim());
-      item.SubItems.Add('');
-      item.SubItems.Add('');
-      lvErrors.Items.Add(item);
+      if line.Trim() = '' then continue;
+      m := re.Match(line.Trim());
+      if m.Success then
+      begin
+        item := new System.Windows.Forms.ListViewItem(m.Groups[3].Value); // 메시지
+        item.SubItems.Add(m.Groups[2].Value);  // 줄번호
+        item.SubItems.Add(m.Groups[1].Value);  // 파일명
+        item.ForeColor := System.Drawing.Color.Red;
+        lvErrors.Items.Add(item);
+      end
+      else
+      begin
+        item := new System.Windows.Forms.ListViewItem(line.Trim());
+        item.SubItems.Add('');
+        item.SubItems.Add('');
+        lvErrors.Items.Add(item);
+      end;
     end;
   end;
 
@@ -887,11 +989,6 @@ begin
   // F5/F6 단축키
   Self.KeyPreview := true;
   Self.KeyDown += FormKeyDown;
-//  Self.KeyDown    += procedure(s: System.Object; ke: System.Windows.Forms.KeyEventArgs)
-//  begin
-//    if ke.KeyCode = System.Windows.Forms.Keys.F5 then OnRun(s, System.EventArgs.Empty)
-//    else if ke.KeyCode = System.Windows.Forms.Keys.F6 then OnBuild(s, System.EventArgs.Empty);
-//  end;
 end;
 
 // ═════════════════════════════════════════════
@@ -1155,7 +1252,7 @@ begin
 
   // 우클릭 복사 메뉴
   var errMenu := new System.Windows.Forms.ContextMenuStrip();
-  var copyItem := new System.Windows.Forms.ToolStripMenuItem('복사(&C)\tCtrl+C');
+  var copyItem := new System.Windows.Forms.ToolStripMenuItem('복사(&C)' + #9 + 'Ctrl+C');
   copyItem.Click += OnErrorsCopy;
   errMenu.Items.Add(copyItem);
   lvErrors.ContextMenuStrip := errMenu;
@@ -1510,19 +1607,14 @@ begin
   end;
 end;
 
-procedure Form1.FormKeyDown(sender: Object; ke: System.Windows.Forms.KeyEventArgs);
+// ═════════════════════════════════════════════
+procedure Form1.FormKeyDown(sender: System.Object; ke: System.Windows.Forms.KeyEventArgs);
 begin
-  if ke.KeyCode = Keys.F5 then
+  if ke.KeyCode = System.Windows.Forms.Keys.F5 then
     OnRun(sender, System.EventArgs.Empty)
-  else if ke.KeyCode = Keys.F6 then
+  else if ke.KeyCode = System.Windows.Forms.Keys.F6 then
     OnBuild(sender, System.EventArgs.Empty);
 end;
-
-//  Self.KeyDown    += procedure(s: System.Object; ke: System.Windows.Forms.KeyEventArgs)
-//  begin
-//    if ke.KeyCode = System.Windows.Forms.Keys.F5 then OnRun(s, System.EventArgs.Empty)
-//    else if ke.KeyCode = System.Windows.Forms.Keys.F6 then OnBuild(s, System.EventArgs.Empty);
-//  end;
 
 
 // Help > About
@@ -1530,7 +1622,7 @@ procedure Form1.OnAbout(sender: System.Object; e: System.EventArgs);
 begin
   System.Windows.Forms.MessageBox.Show(
     'PascalABC-WPF-Xaml-Designer' + System.Environment.NewLine +
-    'Ver 1.2.3' + System.Environment.NewLine + System.Environment.NewLine +
+    'Ver 1.2.4' + System.Environment.NewLine + System.Environment.NewLine +
     'ICSharpCode.WpfDesign.Designer' + System.Environment.NewLine +
     'ICSharpCode.WpfDesign' + System.Environment.NewLine +
     'ICSharpCode.WpfDesign.XamlDom' + System.Environment.NewLine +

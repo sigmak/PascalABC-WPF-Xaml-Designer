@@ -124,7 +124,7 @@ type
 constructor Form1.Create;
 begin
   inherited Create;
-  Self.Text   := 'PascalABC-WPF-Xaml-Designer Ver 1.2.2';
+  Self.Text   := 'PascalABC-WPF-Xaml-Designer Ver 1.2.3';
   Self.Width  := 1600;
   Self.Height := 950;
 
@@ -413,86 +413,71 @@ var
   xamlPath: string;
   pasPath : string;
   proc    : System.Diagnostics.Process;
-  output  : string;
+  outputFile: string;
   psi     : System.Diagnostics.ProcessStartInfo;
   compilerPath: string;
+  tempBat : string;
 begin
   xamlPath := fProjectPath + fXamlFileName;
   pasPath  := fProjectPath + fPasFileName;
 
   // 1) XAML 저장
-  System.IO.File.WriteAllText(xamlPath, fXamlEditor.Text,
-    System.Text.Encoding.UTF8);
+  System.IO.File.WriteAllText(xamlPath, fXamlEditor.Text, System.Text.Encoding.UTF8);
 
   // 2) PAS 저장
-  System.IO.File.WriteAllText(pasPath, fCodeEditor.Text,
-    System.Text.Encoding.UTF8);
+  System.IO.File.WriteAllText(pasPath, fCodeEditor.Text, System.Text.Encoding.UTF8);
 
   compilerPath := FindPabcCompiler();
-  if compilerPath = '' then
-  begin
-    System.Windows.Forms.MessageBox.Show(
-      'pabcnetc.exe를 찾을 수 없습니다.' + #13#10 +
-      '아래 경로 중 하나를 직접 지정해주세요:' + #13#10 +
-      'C:\Program Files\PascalABC.NET\' + #13#10 +
-      '또는 PascalABC.NET IDE에서 빌드된 .exe 경로를 확인하세요.',
-      '컴파일러를 찾을 수 없음',
-      System.Windows.Forms.MessageBoxButtons.OK,
-      System.Windows.Forms.MessageBoxIcon.Warning);
-    exit;
-  end;
+  if compilerPath = '' then exit;
+
+  // 임시 bat 파일 만들어서 실행 결과 파일로 받기
+  tempBat := fProjectPath + 'build.bat';
+  outputFile := fProjectPath + 'build_output.txt';
+  
+  var batContent := new System.Text.StringBuilder();
+  batContent.AppendLine('@echo off');
+  batContent.AppendLine('chcp 65001 > nul');
+  batContent.AppendLine('"' + compilerPath + '" "' + pasPath + '" > "' + outputFile + '" 2>&1');
+  System.IO.File.WriteAllText(tempBat, batContent.ToString(), System.Text.Encoding.Default);
 
   // 3) pabcnetc.exe 로 컴파일
   psi                       := new System.Diagnostics.ProcessStartInfo();
-  psi.FileName              := compilerPath;
-  psi.Arguments             := '"' + pasPath + '"';
+  psi.FileName              := 'cmd.exe';
+  psi.Arguments             := '/c "' + tempBat + '"';
   psi.WorkingDirectory      := fProjectPath;
   psi.UseShellExecute       := false;
-  psi.RedirectStandardOutput := true;
-  psi.RedirectStandardError  := true;
   psi.CreateNoWindow        := true;
-  // 콘솔 출력 인코딩 지정 (한글 깨짐 방지)
-  // 시스템 기본 OEM 코드페이지 사용 (보통 CP949, 영문 Windows는 437)
-  try
-    psi.StandardOutputEncoding := System.Text.Encoding.GetEncoding(
-      System.Globalization.CultureInfo.CurrentCulture.TextInfo.OEMCodePage);
-    psi.StandardErrorEncoding := psi.StandardOutputEncoding;
-  except
-    psi.StandardOutputEncoding := System.Text.Encoding.GetEncoding(949);
-    psi.StandardErrorEncoding  := System.Text.Encoding.GetEncoding(949);
-  end;
+  psi.WindowStyle := System.Diagnostics.ProcessWindowStyle.Hidden;
 
   proc := new System.Diagnostics.Process();
   proc.StartInfo := psi;
 
   try
-    proc.Start();
-    output := proc.StandardOutput.ReadToEnd() +
-              proc.StandardError.ReadToEnd();
-    proc.WaitForExit();
-
-    if proc.ExitCode = 0 then
-    begin
-      lvErrors.Items.Clear();
-      var item := new System.Windows.Forms.ListViewItem('빌드 성공 (' + compilerPath + ')');
-      item.SubItems.Add('');
-      item.SubItems.Add('');
-      item.ForeColor := System.Drawing.Color.Green;
-      lvErrors.Items.Add(item);
-      System.Windows.Forms.MessageBox.Show('빌드 성공!',
-        '빌드', System.Windows.Forms.MessageBoxButtons.OK,
-        System.Windows.Forms.MessageBoxIcon.Information);
-    end
-    else
-      ShowBuildErrors(output);
-  except
-    on ex: System.Exception do
-      System.Windows.Forms.MessageBox.Show(
-        '컴파일 실행 오류: ' + ex.Message + #13#10 +
-        '경로: ' + compilerPath,
-        '빌드 오류',
-        System.Windows.Forms.MessageBoxButtons.OK,
-        System.Windows.Forms.MessageBoxIcon.Error);
+    try
+      proc.Start();
+      proc.WaitForExit();
+      
+      var output := '';
+      if System.IO.File.Exists(outputFile) then
+        output := System.IO.File.ReadAllText(outputFile, System.Text.Encoding.UTF8);
+  
+      if proc.ExitCode = 0 then
+      begin
+        lvErrors.Items.Clear();
+        var item := new System.Windows.Forms.ListViewItem('빌드 성공');
+        item.ForeColor := System.Drawing.Color.Green;
+        lvErrors.Items.Add(item);
+      end
+      else
+        ShowBuildErrors(output);
+        
+    except
+      on ex: System.Exception do
+        System.Windows.Forms.MessageBox.Show('컴파일 실행 오류: ' + ex.Message);
+    end;
+  finally
+    if System.IO.File.Exists(tempBat) then System.IO.File.Delete(tempBat);
+    if System.IO.File.Exists(outputFile) then System.IO.File.Delete(outputFile);
   end;
 end;
 
@@ -1545,7 +1530,7 @@ procedure Form1.OnAbout(sender: System.Object; e: System.EventArgs);
 begin
   System.Windows.Forms.MessageBox.Show(
     'PascalABC-WPF-Xaml-Designer' + System.Environment.NewLine +
-    'Ver 1.2.2' + System.Environment.NewLine + System.Environment.NewLine +
+    'Ver 1.2.3' + System.Environment.NewLine + System.Environment.NewLine +
     'ICSharpCode.WpfDesign.Designer' + System.Environment.NewLine +
     'ICSharpCode.WpfDesign' + System.Environment.NewLine +
     'ICSharpCode.WpfDesign.XamlDom' + System.Environment.NewLine +

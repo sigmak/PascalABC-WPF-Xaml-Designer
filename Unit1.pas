@@ -93,6 +93,8 @@ type
     procedure OnBuild(sender: System.Object; e: System.EventArgs);
     procedure OnRun(sender: System.Object; e: System.EventArgs);
     function  FindPabcCompiler: string;
+    procedure OnErrorsCopy(sender: System.Object; e: System.EventArgs);
+    procedure OnErrorsKeyDown(sender: System.Object; e: System.Windows.Forms.KeyEventArgs);
 
     // 폴딩
     procedure UpdateFolding;
@@ -122,7 +124,7 @@ type
 constructor Form1.Create;
 begin
   inherited Create;
-  Self.Text   := 'PascalABC-WPF-Xaml-Designer Ver 1.2.1';
+  Self.Text   := 'PascalABC-WPF-Xaml-Designer Ver 1.2.2';
   Self.Width  := 1600;
   Self.Height := 950;
 
@@ -449,6 +451,16 @@ begin
   psi.RedirectStandardOutput := true;
   psi.RedirectStandardError  := true;
   psi.CreateNoWindow        := true;
+  // 콘솔 출력 인코딩 지정 (한글 깨짐 방지)
+  // 시스템 기본 OEM 코드페이지 사용 (보통 CP949, 영문 Windows는 437)
+  try
+    psi.StandardOutputEncoding := System.Text.Encoding.GetEncoding(
+      System.Globalization.CultureInfo.CurrentCulture.TextInfo.OEMCodePage);
+    psi.StandardErrorEncoding := psi.StandardOutputEncoding;
+  except
+    psi.StandardOutputEncoding := System.Text.Encoding.GetEncoding(949);
+    psi.StandardErrorEncoding  := System.Text.Encoding.GetEncoding(949);
+  end;
 
   proc := new System.Diagnostics.Process();
   proc.StartInfo := psi;
@@ -502,6 +514,43 @@ begin
       '빌드된 실행 파일을 찾을 수 없습니다: ' + exePath,
       '실행 오류', System.Windows.Forms.MessageBoxButtons.OK,
       System.Windows.Forms.MessageBoxIcon.Error);
+end;
+
+// ═════════════════════════════════════════════
+// 오류목록 선택 항목을 클립보드로 복사 (탭 구분, 한글 정상)
+procedure Form1.OnErrorsCopy(sender: System.Object; e: System.EventArgs);
+var
+  sb  : System.Text.StringBuilder;
+  item: System.Windows.Forms.ListViewItem;
+begin
+  if lvErrors.SelectedItems.Count = 0 then exit;
+  sb := new System.Text.StringBuilder();
+  foreach item in lvErrors.SelectedItems do
+  begin
+    sb.Append(item.Text);
+    sb.Append(#9);
+    sb.Append(item.SubItems[1].Text); // 줄
+    sb.Append(#9);
+    sb.Append(item.SubItems[2].Text); // 파일
+    sb.AppendLine();
+  end;
+  System.Windows.Forms.Clipboard.SetText(sb.ToString());
+end;
+
+procedure Form1.OnErrorsKeyDown(sender: System.Object; e: System.Windows.Forms.KeyEventArgs);
+begin
+  if e.Control and (e.KeyCode = System.Windows.Forms.Keys.C) then
+  begin
+    OnErrorsCopy(sender, System.EventArgs.Empty);
+    e.Handled := true;
+  end
+  else if e.Control and (e.KeyCode = System.Windows.Forms.Keys.A) then
+  begin
+    var i: integer;
+    for i := 0 to lvErrors.Items.Count - 1 do
+      lvErrors.Items[i].Selected := true;
+    e.Handled := true;
+  end;
 end;
 
 // ═════════════════════════════════════════════
@@ -1115,7 +1164,16 @@ begin
   lvErrors.View              := System.Windows.Forms.View.Details;
   lvErrors.FullRowSelect     := true;
   lvErrors.GridLines         := true;
+  lvErrors.MultiSelect       := true;
   lvErrors.Font              := new System.Drawing.Font('Consolas', 9);
+  lvErrors.KeyDown           += OnErrorsKeyDown;
+
+  // 우클릭 복사 메뉴
+  var errMenu := new System.Windows.Forms.ContextMenuStrip();
+  var copyItem := new System.Windows.Forms.ToolStripMenuItem('복사(&C)\tCtrl+C');
+  copyItem.Click += OnErrorsCopy;
+  errMenu.Items.Add(copyItem);
+  lvErrors.ContextMenuStrip := errMenu;
   colMsg  := new System.Windows.Forms.ColumnHeader();
   colMsg.Text  := '오류 메시지';
   colMsg.Width := 500;
@@ -1487,7 +1545,7 @@ procedure Form1.OnAbout(sender: System.Object; e: System.EventArgs);
 begin
   System.Windows.Forms.MessageBox.Show(
     'PascalABC-WPF-Xaml-Designer' + System.Environment.NewLine +
-    'Ver 1.2.1' + System.Environment.NewLine + System.Environment.NewLine +
+    'Ver 1.2.2' + System.Environment.NewLine + System.Environment.NewLine +
     'ICSharpCode.WpfDesign.Designer' + System.Environment.NewLine +
     'ICSharpCode.WpfDesign' + System.Environment.NewLine +
     'ICSharpCode.WpfDesign.XamlDom' + System.Environment.NewLine +

@@ -48,6 +48,7 @@ type
     procedure SyncXamlEditor;
     function  SaveDesignerToString: string;
     function  StripCustomNamespaces(xaml: string): string;
+    function  PreprocessXaml(xaml: string): string;
   public
     constructor Create;
   end;
@@ -56,7 +57,7 @@ type
 constructor Form1.Create;
 begin
   inherited Create;
-  Self.Text   := 'PascalABC-WPF-Xaml-Designer Ver 1.1.1';
+  Self.Text   := 'PascalABC-WPF-Xaml-Designer Ver 1.1.2';
   Self.Width  := 1500;
   Self.Height := 900;
 
@@ -576,20 +577,69 @@ begin
 end;
 
 // ─────────────────────────────────────────────
-procedure Form1.OnOpen(sender: System.Object; e: System.EventArgs);
+// Window/UserControl XAML → 디자이너용 Grid XAML 로 변환
+// OnOpen 과 OnApplyXaml 양쪽에서 공통 사용
+function Form1.PreprocessXaml(xaml: string): string;
 var
-  dlg         : System.Windows.Forms.OpenFileDialog;
-  xaml        : string;
   cleanedXaml : string;
   doc         : System.Xml.XmlDocument;
   root        : System.Xml.XmlElement;
   nsMgr       : System.Xml.XmlNamespaceManager;
   resNode     : System.Xml.XmlNode;
-  dcNode      : System.Xml.XmlNode;
   resourcesXml: string;
   inner       : string;
   nodesToRemove: System.Collections.Generic.List<System.Xml.XmlNode>;
   node        : System.Xml.XmlNode;
+begin
+  Result := xaml; // 변환 불필요 시 원본 반환
+
+  if not (xaml.Contains('<Window ') or xaml.Contains('<UserControl ')) then
+    exit;
+
+  // ① clr-namespace prefix 선언 + 본문 사용 전체 제거
+  cleanedXaml := StripCustomNamespaces(xaml);
+
+  doc := new System.Xml.XmlDocument();
+  doc.LoadXml(cleanedXaml);
+  root := doc.DocumentElement;
+
+  nsMgr := new System.Xml.XmlNamespaceManager(doc.NameTable);
+  nsMgr.AddNamespace('wpf',
+    'http://schemas.microsoft.com/winfx/2006/xaml/presentation');
+
+  // ② Window.Resources → Grid.Resources 로 이식
+  resNode      := root.SelectSingleNode('wpf:Window.Resources', nsMgr);
+  resourcesXml := '';
+  if resNode <> nil then
+    resourcesXml := '<Grid.Resources>' + resNode.InnerXml + '</Grid.Resources>';
+
+  // ③ Window.* / UserControl.* 자식 노드 전체 제거
+  //    (DataContext, Resources, Style, InputBindings 등)
+  nodesToRemove := new System.Collections.Generic.List<System.Xml.XmlNode>();
+  foreach node in root.ChildNodes do
+  begin
+    var localName := node.LocalName;
+    if localName.StartsWith('Window.') or localName.StartsWith('UserControl.') then
+      nodesToRemove.Add(node);
+  end;
+  foreach node in nodesToRemove do
+    root.RemoveChild(node);
+
+  inner := root.InnerXml;
+
+  Result :=
+    '<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"' +
+    '      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">' +
+    resourcesXml +
+    inner +
+    '</Grid>';
+end;
+
+// ─────────────────────────────────────────────
+procedure Form1.OnOpen(sender: System.Object; e: System.EventArgs);
+var
+  dlg : System.Windows.Forms.OpenFileDialog;
+  xaml: string;
 begin
   dlg        := new System.Windows.Forms.OpenFileDialog();
   dlg.Filter := 'XAML 파일|*.xaml|모든 파일|*.*';
@@ -605,63 +655,13 @@ begin
     end;
   end;
 
-  if xaml.Contains('<Window ') or xaml.Contains('<UserControl ') then
-  begin
-    try
-      // ① clr-namespace prefix 선언 및 본문 사용 전체 제거
-      //    (vm:, conv: 등 xmlns 선언 + 해당 prefix 엘리먼트/속성 참조 모두 제거)
-      cleanedXaml := StripCustomNamespaces(xaml);
-
-      doc := new System.Xml.XmlDocument();
-      doc.LoadXml(cleanedXaml);
-      root := doc.DocumentElement;
-
-      nsMgr := new System.Xml.XmlNamespaceManager(doc.NameTable);
-      nsMgr.AddNamespace('wpf',
-        'http://schemas.microsoft.com/winfx/2006/xaml/presentation');
-
-      // ② Window.Resources → Grid.Resources 로 이식
-      resNode      := root.SelectSingleNode('wpf:Window.Resources', nsMgr);
-      resourcesXml := '';
-      if resNode <> nil then
-      begin
-        resourcesXml := '<Grid.Resources>' + resNode.InnerXml + '</Grid.Resources>';
-      end;
-
-      // ③ 디자이너에서 처리 불가한 노드 제거
-      //    Window.DataContext, Window.Resources, Window.Style 등
-      nodesToRemove := new System.Collections.Generic.List<System.Xml.XmlNode>();
-      foreach node in root.ChildNodes do
-      begin
-        var localName := node.LocalName;
-        if localName.StartsWith('Window.') or localName.StartsWith('UserControl.') then
-          nodesToRemove.Add(node);
-      end;
-      foreach node in nodesToRemove do
-        root.RemoveChild(node);
-
-      inner := root.InnerXml;
-
-      xaml :=
-        '<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"' +
-        '      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">' +
-        resourcesXml +
-        inner +
-        '</Grid>';
-
-      System.Windows.Forms.MessageBox.Show(
-        'Window/UserControl 루트를 Grid로 변환하여 로드합니다.' + #13#10 +
-        '(커스텀 네임스페이스 및 DataContext는 디자이너에서 제외됩니다.)',
-        '알림',
-        System.Windows.Forms.MessageBoxButtons.OK,
-        System.Windows.Forms.MessageBoxIcon.Information);
-
-    except
-      on ex: System.Exception do
-      begin
-        System.Windows.Forms.MessageBox.Show('XAML 전처리 오류: ' + ex.Message);
-        exit;
-      end;
+  try
+    xaml := PreprocessXaml(xaml);
+  except
+    on ex: System.Exception do
+    begin
+      System.Windows.Forms.MessageBox.Show('XAML 전처리 오류: ' + ex.Message);
+      exit;
     end;
   end;
 
@@ -675,13 +675,30 @@ end;
 
 // ─────────────────────────────────────────────
 // 하단 XAML → 디자이너 적용
+// XAML 에디터에서 붙여넣기 후 적용
+// Window/UserControl 루트도 자동 전처리하여 디자이너에 반영
 procedure Form1.OnApplyXaml(sender: System.Object; e: System.EventArgs);
+var
+  xaml: string;
 begin
+  xaml := txtXaml.Text.Trim();
+  if xaml = '' then exit;
+
   try
-    LoadXaml(txtXaml.Text);
+    xaml := PreprocessXaml(xaml);  // Window/UserControl이면 Grid로 변환
   except
     on ex: System.Exception do
-      System.Windows.Forms.MessageBox.Show('XAML 오류: ' + ex.Message);
+    begin
+      System.Windows.Forms.MessageBox.Show('XAML 전처리 오류: ' + ex.Message);
+      exit;
+    end;
+  end;
+
+  try
+    LoadXaml(xaml);
+  except
+    on ex: System.Exception do
+      System.Windows.Forms.MessageBox.Show('XAML 로드 오류: ' + ex.Message);
   end;
 end;
 
@@ -696,14 +713,14 @@ procedure Form1.OnAbout(sender: System.Object; e: System.EventArgs);
 begin
   System.Windows.Forms.MessageBox.Show(
     'PascalABC-WPF-Xaml-Designer' + System.Environment.NewLine +
-    'Ver 1.1.1' + System.Environment.NewLine + System.Environment.NewLine +
+    'Ver 1.1.2' + System.Environment.NewLine + System.Environment.NewLine +
     'ICSharpCode.WpfDesign.Designer' + System.Environment.NewLine +
     'ICSharpCode.WpfDesign' + System.Environment.NewLine +
     'ICSharpCode.WpfDesign.XamlDom' + System.Environment.NewLine +
     'ICSharpCode.AvalonEdit' + System.Environment.NewLine +
     'avalonedit.6.3.1.120' + System.Environment.NewLine +
     ' 기반 WPF XAML 디자이너' + System.Environment.NewLine + System.Environment.NewLine +
-    'Built with PascalABC.NET 3.11.1.3764' + System.Environment.NewLine + System.Environment.NewLine +
+    'Built with PascalABC.NET 3.11.1.3833' + System.Environment.NewLine + System.Environment.NewLine +
     'made by sigmak (dwfree74@gmail.com)',
     '프로그램 정보',
     System.Windows.Forms.MessageBoxButtons.OK,

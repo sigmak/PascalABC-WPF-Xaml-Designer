@@ -72,8 +72,8 @@ type
     procedure OnSelectionChanged(sender: System.Object; e: ICSharpCode.WpfDesign.DesignItemCollectionEventArgs);
     procedure OnUndoStackChanged(sender: System.Object; e: System.EventArgs);
     procedure OnTabChanged(sender: System.Object; e: System.EventArgs);
-    
-    procedure FormKeyDown(sender: System.Object; ke: System.Windows.Forms.KeyEventArgs);    
+
+    procedure FormKeyDown(sender: System.Object; ke: System.Windows.Forms.KeyEventArgs);
 
     // 파일 메뉴
     procedure OnNewProject(sender: System.Object; e: System.EventArgs);
@@ -124,7 +124,7 @@ type
 constructor Form1.Create;
 begin
   inherited Create;
-  Self.Text   := 'PascalABC-WPF-Xaml-Designer Ver 1.2.4';
+  Self.Text   := 'PascalABC-WPF-Xaml-Designer Ver 1.2.5';
   Self.Width  := 1600;
   Self.Height := 950;
 
@@ -157,12 +157,16 @@ end;
 
 // ═════════════════════════════════════════════
 // PascalABC.NET WPF 코드비하인드 템플릿 생성
+// unit 이름 = 파일명(MainWindow), 클래스명 = TMainWindow (충돌 방지)
 function Form1.GeneratePasCode(xamlFileName: string): string;
 var
   sb: System.Text.StringBuilder;
+  unitName: string;
 begin
+  unitName := System.IO.Path.GetFileNameWithoutExtension(xamlFileName);
+
   sb := new System.Text.StringBuilder();
-  sb.AppendLine('unit MainUnit;');          // ← MainWindow → MainUnit
+  sb.AppendLine('program ' + unitName + ';');   // ← unit → program
   sb.AppendLine('');
   sb.AppendLine('{$reference PresentationFramework.dll}');
   sb.AppendLine('{$reference PresentationCore.dll}');
@@ -173,20 +177,17 @@ begin
   sb.AppendLine('  System.Windows.Controls;');
   sb.AppendLine('');
   sb.AppendLine('type');
-  sb.AppendLine('  MainWindow = class(System.Windows.Window)');
+  sb.AppendLine('  T' + unitName + ' = class(System.Windows.Window)');
   sb.AppendLine('  public');
   sb.AppendLine('    constructor Create;');
   sb.AppendLine('  end;');
   sb.AppendLine('');
-  sb.AppendLine('constructor MainWindow.Create;');
+  sb.AppendLine('constructor T' + unitName + '.Create;');
   sb.AppendLine('begin');
   sb.AppendLine('  inherited Create;');
   sb.AppendLine('  System.Windows.Application.LoadComponent(');
   sb.AppendLine('    Self,');
-  sb.AppendLine(
-    System.String.Format('    new System.Uri(''{0}'', System.UriKind.Relative)',
-      [xamlFileName])
-  );
+  sb.AppendLine('    new System.Uri(' + #39 + xamlFileName + #39 + ', System.UriKind.Relative)');
   sb.AppendLine('  );');
   sb.AppendLine('end;');
   sb.AppendLine('');
@@ -194,9 +195,16 @@ begin
   sb.AppendLine('');
   sb.AppendLine('begin');
   sb.AppendLine('  var app := new System.Windows.Application();');
-  sb.AppendLine('  app.Run(new MainWindow());');
+  sb.AppendLine('  app.Run(new T' + unitName + '());');
   sb.AppendLine('end.');
   Result := sb.ToString();
+end;
+
+// ═════════════════════════════════════════════
+// 코드 탭에서 사용하는 클래스명 접두사를 가져오는 헬퍼
+function GetClassPrefix(xamlFileName: string): string;
+begin
+  Result := 'T' + System.IO.Path.GetFileNameWithoutExtension(xamlFileName);
 end;
 
 // ═════════════════════════════════════════════
@@ -304,17 +312,19 @@ var
   code   : string;
   marker : string;
   handler: string;
+  classPrefix: string;
   sb     : System.Text.StringBuilder;
 begin
   code := fCodeEditor.Text;
   marker := '// ─── 이벤트 핸들러 ───────────────────────────';
+  classPrefix := GetClassPrefix(fXamlFileName);  // 예: TMainWindow
 
   // 이미 핸들러가 있으면 추가하지 않음
-  if code.Contains('procedure MainWindow.' + handlerName) then exit;
+  if code.Contains('procedure ' + classPrefix + '.' + handlerName) then exit;
 
   // 핸들러 코드 생성
   sb := new System.Text.StringBuilder();
-  sb.AppendLine('procedure MainWindow.' + handlerName +
+  sb.AppendLine('procedure ' + classPrefix + '.' + handlerName +
     '(sender: System.Object; e: System.Windows.RoutedEventArgs);');
   sb.AppendLine('begin');
   sb.AppendLine('  // TODO: ' + handlerName + ' 구현');
@@ -406,30 +416,29 @@ begin
 end;
 
 // ═════════════════════════════════════════════
-// 빌드: bat 파일 경유, 단계별로 try/except를 분리해서
-// 예외 발생 시 즉시 ex.Message를 문자열로 캡처 → 이후 ex 객체를 다시 참조하지 않음
-// (ToString() 실패는 보통 예외 객체가 finally 블록 등에서 재사용/지연 평가될 때 발생)
+// 빌드:
+//   pabcnetc.exe 는 콘솔 핸들을 직접 사용하므로 stdout 리디렉션 불가.
+//   bat 파일을 통해 UseShellExecute=true 로 정상 콘솔 환경에서 실행하고,
+//   성공 여부는 .exe 파일 생성 여부로 판단한다.
+//   오류 내용은 잠깐 뜨는 콘솔 창에서 확인할 수 있다.
 procedure Form1.OnBuild(sender: System.Object; e: System.EventArgs);
 var
   xamlPath: string;
   pasPath : string;
-  outputFile: string;
+  tempBat     : string;
   compilerPath: string;
-  tempBat : string;
-  output      : string;
   exitCode    : integer;
   hadError    : boolean;
   errMsg      : string;
+  exePath     : string;
 begin
   hadError := false;
   errMsg   := '';
-  output   := '';
   exitCode := -1;
 
   xamlPath := fProjectPath + fXamlFileName;
   pasPath  := fProjectPath + fPasFileName;
-  tempBat    := fProjectPath + 'build.bat';
-  outputFile := fProjectPath + 'build_output.txt';
+  tempBat  := fProjectPath + 'build.bat';
 
   
   try
@@ -453,7 +462,7 @@ begin
 
   // 2) 컴파일러 경로 탐색
   compilerPath := FindPabcCompiler();
-  System.Windows.Forms.MessageBox.Show('컴파일러 위치: ' + compilerPath);
+  //System.Windows.Forms.MessageBox.Show('컴파일러 위치: ' + compilerPath);
   if compilerPath = '' then
   begin
     System.Windows.Forms.MessageBox.Show(
@@ -465,7 +474,9 @@ begin
     exit;
   end;
 
-// 3) bat 파일 생성 - 리디렉션 없이
+  // 3) bat 파일 생성 - 리디렉션 없이
+  //    pabcnetc.exe 는 stdout 리디렉션(>)을 하면 콘솔 핸들 오류가 발생하므로
+  //    리디렉션 없이 그냥 실행한다.
   try
     var batContent := new System.Text.StringBuilder();
     batContent.AppendLine('@echo off');
@@ -488,6 +499,7 @@ begin
   end;
 
   // 4) 빌드 프로세스 실행
+  //    UseShellExecute=true 여야 pabcnetc.exe 가 정상 콘솔 핸들을 얻는다.
   try
     var psi := new System.Diagnostics.ProcessStartInfo();
     psi.FileName         := 'cmd.exe';
@@ -495,7 +507,7 @@ begin
     psi.WorkingDirectory := fProjectPath;
     psi.UseShellExecute  := true;
     psi.CreateNoWindow   := false;
-    psi.WindowStyle      := System.Diagnostics.ProcessWindowStyle.Normal;
+    psi.WindowStyle      := System.Diagnostics.ProcessWindowStyle.Normal;//.Minimized;
 
     var proc := new System.Diagnostics.Process();
     proc.StartInfo := psi;
@@ -518,18 +530,6 @@ begin
     end;
   end;
 
-  // 5) 출력 파일 읽기 - exe 존재 여부로 성공 판단
-  if not hadError then
-  begin
-    var exePath := fProjectPath +
-      System.IO.Path.GetFileNameWithoutExtension(fPasFileName) + '.exe';
-    if System.IO.File.Exists(exePath) then
-      exitCode := 0
-    else
-      exitCode := 1;
-    output := ''; // 출력을 캡처할 수 없으므로 비워둠
-  end;
-
   // 6) 임시 파일 정리
   try
     if System.IO.File.Exists(tempBat) then System.IO.File.Delete(tempBat);
@@ -544,24 +544,41 @@ begin
     var item := new System.Windows.Forms.ListViewItem('빌드 실행 오류: ' + errMsg);
     item.ForeColor := System.Drawing.Color.Red;
     lvErrors.Items.Add(item);
-    System.Windows.Forms.MessageBox.Show('빌드 실행 중 오류가 발생했습니다: ' + errMsg);
+    System.Windows.Forms.MessageBox.Show('빌드 실행 중 오류: ' + errMsg);
     exit;
   end;
 
-  if exitCode = 0 then
+  // exe 존재 여부로 성공/실패 최종 판단
+  exePath := fProjectPath +
+    System.IO.Path.GetFileNameWithoutExtension(fPasFileName) + '.exe';
+
+  if System.IO.File.Exists(exePath) then
   begin
     lvErrors.Items.Clear();
-    var item := new System.Windows.Forms.ListViewItem('빌드 성공');
+    var item := new System.Windows.Forms.ListViewItem('빌드 성공: ' + exePath);
     item.SubItems.Add('');
     item.SubItems.Add('');
     item.ForeColor := System.Drawing.Color.Green;
     lvErrors.Items.Add(item);
-    System.Windows.Forms.MessageBox.Show('빌드 성공!',
+    System.Windows.Forms.MessageBox.Show('빌드 성공!' + #13#10 + exePath,
       '빌드', System.Windows.Forms.MessageBoxButtons.OK,
       System.Windows.Forms.MessageBoxIcon.Information);
   end
   else
-    ShowBuildErrors(output);
+  begin
+    lvErrors.Items.Clear();
+    var item := new System.Windows.Forms.ListViewItem(
+      '빌드 실패 - 콘솔 창의 오류 메시지를 확인하세요. (종료코드: ' +
+      exitCode.ToString() + ')');
+    item.SubItems.Add('');
+    item.SubItems.Add('');
+    item.ForeColor := System.Drawing.Color.Red;
+    lvErrors.Items.Add(item);
+    System.Windows.Forms.MessageBox.Show(
+      '빌드 실패 - 잠깐 표시된 콘솔 창의 오류 메시지를 확인하세요.',
+      '빌드 실패', System.Windows.Forms.MessageBoxButtons.OK,
+      System.Windows.Forms.MessageBoxIcon.Error);
+  end;
 end;
 
 // ═════════════════════════════════════════════
@@ -643,7 +660,7 @@ begin
   if output.Trim() = '' then
   begin
     item := new System.Windows.Forms.ListViewItem(
-      '빌드가 실패했지만 출력 메시지가 없습니다. 컴파일러 경로/권한을 확인하세요.');
+      '빌드 실패 - 콘솔 창의 오류 메시지를 확인하세요.');
     item.SubItems.Add('');
     item.SubItems.Add('');
     item.ForeColor := System.Drawing.Color.Red;
@@ -799,7 +816,6 @@ var
   m        : System.Text.RegularExpressions.Match;
   re       : System.Text.RegularExpressions.Regex;
   prefix   : string;
-  pattern  : string;
   s        : string;
 begin
   s        := xaml;
@@ -932,7 +948,7 @@ begin
 
   // ── 보기 메뉴 ──
   viewMenu              := new System.Windows.Forms.ToolStripMenuItem('보기(&V)');
-  applyItem := new System.Windows.Forms.ToolStripMenuItem('XAML 적용(&A)');
+  applyItem := new System.Windows.Forms.ToolStripMenuItem('XAML 적용(&Y)');
   syncItem  := new System.Windows.Forms.ToolStripMenuItem('XAML 동기화(&X)');
   applyItem.Click += OnApplyXamlMenu;
   syncItem.Click  += OnSyncXamlMenu;
@@ -1453,6 +1469,7 @@ begin
     fProjectPath  := System.IO.Path.GetDirectoryName(dlg.FileName) + '\';
     fXamlFileName := System.IO.Path.GetFileName(dlg.FileName);
     fPasFileName  := System.IO.Path.GetFileName(pasPath);
+    Self.Text     := 'PascalABC WPF XAML Designer - ' + fProjectPath;
     System.Windows.Forms.MessageBox.Show(
       'XAML: ' + dlg.FileName + #13#10 + 'PAS: ' + pasPath + #13#10 + '저장 완료!');
   end;
@@ -1622,7 +1639,7 @@ procedure Form1.OnAbout(sender: System.Object; e: System.EventArgs);
 begin
   System.Windows.Forms.MessageBox.Show(
     'PascalABC-WPF-Xaml-Designer' + System.Environment.NewLine +
-    'Ver 1.2.4' + System.Environment.NewLine + System.Environment.NewLine +
+    'Ver 1.2.5' + System.Environment.NewLine + System.Environment.NewLine +
     'ICSharpCode.WpfDesign.Designer' + System.Environment.NewLine +
     'ICSharpCode.WpfDesign' + System.Environment.NewLine +
     'ICSharpCode.WpfDesign.XamlDom' + System.Environment.NewLine +

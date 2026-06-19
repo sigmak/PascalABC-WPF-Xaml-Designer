@@ -27,7 +27,7 @@ PascalABC.net 개발툴을 활용한 pascal wpf xaml Designer
 
 * 주의사항
 
- MainWindow.exe 의 정상적인 작동을 위해 같은 폴더에 MainWindow.xaml 파일이 존해해야함.
+ MainWindow.exe 의 정상적인 작동을 위해 같은 폴더에 MainWindow.xaml 파일이 존재해야함.
  
  그외 소소한(?) 버그가 있을수도 있음.
 

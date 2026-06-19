@@ -229,8 +229,7 @@ type
     function  IsWpfEvent(attrName: string): boolean;
     function  StripEventAttributesForRuntime(xaml: string): string;
 
-    // ★ 수정: WrapXamlAsWindowForBuild 대신 ExtractInnerXamlForBuild 사용
-    function  ExtractInnerXamlForBuild(xaml: string): string;
+    function  PrepareXamlForBuild(xaml: string): string;
 
     function  GenerateWpfAppCode(xamlFileName: string): string;
     function  GenerateControlLibCode(xamlFileName: string): string;
@@ -254,7 +253,7 @@ type
 constructor Form1.Create;
 begin
   inherited Create;
-  Self.Text   := 'PascalABC-WPF-Designer Ver 2.0.0';
+  Self.Text   := 'PascalABC-WPF-Designer Ver 2.0.1';
   Self.Width  := 1600;
   Self.Height := 950;
 
@@ -417,18 +416,19 @@ begin
   Result := s;
 end;
 
+
 // =============================================================================
-// ★ ExtractInnerXamlForBuild
-//   Window/UserControl의 내부 첫 번째 자식 요소(Grid 등)만 추출하여
-//   독립 XAML 파일로 저장한다.
-//   → XamlReader.Load 시 UIElement로 캐스트 가능, Window 충돌 없음.
+// ★ PrepareXamlForBuild
+//   VS 컴파일 XAML과 동일한 방식의 런타임 로딩(XamlObjectWriter +
+//   RootObjectInstance)을 위해 XAML을 준비한다.
+//   Window/UserControl의 Background, Resources, Title, Width, Height,
+//   Content 등 전체 구조를 그대로 유지한다. 이벤트 속성만 제거한다
+//   (이벤트는 코드에서 직접 += 로 연결하므로 XAML에는 불필요).
 // =============================================================================
-function Form1.ExtractInnerXamlForBuild(xaml: string): string;
+function Form1.PrepareXamlForBuild(xaml: string): string;
 var
-  s   : string;
-  re  : System.Text.RegularExpressions.Regex;
-  doc : System.Xml.XmlDocument;
-  root: System.Xml.XmlElement;
+  s  : string;
+  re : System.Text.RegularExpressions.Regex;
 begin
   s := xaml;
 
@@ -441,152 +441,72 @@ begin
       s := trimmed.Substring(declEnd + 2).TrimStart();
   end;
 
-  // 이벤트 속성 제거
+  // 이벤트 속성 제거 (코드에서 직접 연결)
   s := StripEventAttributesForRuntime(s);
 
-  // x:Class, mc:Ignorable, xmlns:mc, xmlns:d, d:* 제거
-  re := new System.Text.RegularExpressions.Regex('\s+x:Class\s*=\s*"[^"]*"');
-  s  := re.Replace(s, '');
+  // 디자인 타임 전용 네임스페이스 제거 (안전을 위해 유지)
   re := new System.Text.RegularExpressions.Regex('\s+mc:Ignorable\s*=\s*"[^"]*"');
   s  := re.Replace(s, '');
   re := new System.Text.RegularExpressions.Regex('\s+xmlns:mc\s*=\s*"[^"]*"');
   s  := re.Replace(s, '');
-  re := new System.Text.RegularExpressions.Regex('\s+xmlns:d\s*=\s*"[^"]*"');
-  s  := re.Replace(s, '');
   re := new System.Text.RegularExpressions.Regex('\s+d:\w+\s*=\s*"[^"]*"');
   s  := re.Replace(s, '');
+  re := new System.Text.RegularExpressions.Regex('\s+xmlns:d\s*=\s*"[^"]*"');
+  s  := re.Replace(s, '');
 
-  // Window 또는 UserControl 루트이면 첫 번째 자식 요소만 추출
-  var tr := s.TrimStart();
-  if tr.StartsWith('<Window') or tr.StartsWith('<UserControl') then
-  begin
-    try
-      doc  := new System.Xml.XmlDocument();
-      doc.LoadXml(s);
-      root := doc.DocumentElement;
-
-      // 첫 번째 Element 자식 노드 찾기
-      var child : System.Xml.XmlNode := nil;
-      var n: System.Xml.XmlNode;
-      foreach n in root.ChildNodes do
-      begin
-        if n.NodeType = System.Xml.XmlNodeType.Element then
-        begin
-          child := n;
-          break;
-        end;
-      end;
-
-      if child <> nil then
-      begin
-        var newDoc   := new System.Xml.XmlDocument();
-        var imported := newDoc.ImportNode(child, true);
-        newDoc.AppendChild(imported);
-
-        // 루트 요소에 WPF 기본 네임스페이스 추가
-        var rootEl := newDoc.DocumentElement;
-        if rootEl.GetAttribute('xmlns') = '' then
-          rootEl.SetAttribute('xmlns',
-            'http://schemas.microsoft.com/winfx/2006/xaml/presentation');
-        if rootEl.GetAttribute('xmlns:x') = '' then
-          rootEl.SetAttribute('xmlns:x',
-            'http://schemas.microsoft.com/winfx/2006/xaml');
-
-        var sw  := new System.IO.StringWriter();
-        var xws := new System.Xml.XmlWriterSettings();
-        xws.Indent             := true;
-        xws.IndentChars        := '    ';
-        xws.OmitXmlDeclaration := true;
-        var xw := System.Xml.XmlWriter.Create(sw, xws);
-        newDoc.WriteTo(xw);
-        xw.Flush();
-        Result := sw.ToString();
-        exit;
-      end;
-    except
-      on ex: System.Exception do
-      begin
-        // 파싱 실패 시 s 그대로 반환
-      end;
-    end;
-  end;
-
-  // Grid/StackPanel 등 이미 콘텐츠 루트인 경우
+  // ★ 핵심: Window/UserControl 전체를 그대로 유지한다.
+  //   (Background, Resources, Title, Width, Height, Content 전부 보존)
   Result := s;
 end;
 
 // =============================================================================
-// ★ GenerateInitializeComponent (수정)
-//   - XAML 파일에서 UIElement(Grid 등)를 직접 Load
-//   - Self.Content := content (Window→Window 충돌 없음)
-//   - FindName은 content as FrameworkElement 를 통해 수행
-//   - Window Title/Width/Height는 XAML 파싱 후 코드에서 직접 세팅
+// ★ GenerateInitializeComponent
+//   XamlObjectWriter + RootObjectInstance(Self)를 사용해
+//   VS 컴파일 앱과 동일하게 XAML 전체를 기존 Self 위에 합친다.
+//   → Title/Width/Height/Background/Resources를 별도로 파싱/세팅할 필요 없음.
 // =============================================================================
 function Form1.GenerateInitializeComponent(controls: System.Collections.Generic.List<TControlInfo>): string;
 var
   sb        : System.Text.StringBuilder;
-  winTitle  : string;
-  winWidth  : string;
-  winHeight : string;
-  doc       : System.Xml.XmlDocument;
-  root      : System.Xml.XmlElement;
   ctrl      : TControlInfo;
   ctrl2     : TControlInfo;
   ev        : System.Tuple<string,string>;
   hasEvents : boolean;
 begin
-  // XAML에서 Window 속성 파싱
-  winTitle  := fClassName;
-  winWidth  := '800';
-  winHeight := '450';
-  try
-    doc := new System.Xml.XmlDocument();
-    doc.LoadXml(fXamlEditor.Text);
-    root := doc.DocumentElement;
-    if root.HasAttribute('Title')  then winTitle  := root.GetAttribute('Title');
-    if root.HasAttribute('Width')  then winWidth  := root.GetAttribute('Width');
-    if root.HasAttribute('Height') then winHeight := root.GetAttribute('Height');
-  except end;
-
   sb := new System.Text.StringBuilder();
   sb.AppendLine('procedure ' + fClassName + '.InitializeComponent;');
   sb.AppendLine('var');
-  sb.AppendLine('  xamlPath : string;');
-  sb.AppendLine('  fs       : System.IO.FileStream;');
-  sb.AppendLine('  content  : System.Windows.UIElement;');
-  sb.AppendLine('  fe       : System.Windows.FrameworkElement;');
+  sb.AppendLine('  xamlPath    : string;');
+  sb.AppendLine('  fs          : System.IO.FileStream;');
+  sb.AppendLine('  xrSettings  : System.Xaml.XamlXmlReaderSettings;');
+  sb.AppendLine('  xamlReader  : System.Xaml.XamlXmlReader;');
+  sb.AppendLine('  objSettings : System.Xaml.XamlObjectWriterSettings;');
+  sb.AppendLine('  objWriter   : System.Xaml.XamlObjectWriter;');
   sb.AppendLine('begin');
 
-  // Window 속성 직접 세팅
-  sb.AppendLine('  Self.Title  := ' + #39 + winTitle  + #39 + ';');
-  sb.AppendLine('  Self.Width  := ' + winWidth  + ';');
-  sb.AppendLine('  Self.Height := ' + winHeight + ';');
-  sb.AppendLine('');
-
-  // XAML 파일에서 UIElement 로드
   sb.AppendLine('  xamlPath := System.IO.Path.Combine(');
   sb.AppendLine('    System.AppDomain.CurrentDomain.BaseDirectory,');
   sb.AppendLine('    ' + #39 + fXamlFileName + #39 + ');');
+  sb.AppendLine('');
   sb.AppendLine('  fs := new System.IO.FileStream(xamlPath,');
   sb.AppendLine('          System.IO.FileMode.Open, System.IO.FileAccess.Read);');
   sb.AppendLine('  try');
-  sb.AppendLine('    content := System.Windows.Markup.XamlReader.Load(fs)');
-  sb.AppendLine('              as System.Windows.UIElement;');
+  sb.AppendLine('    xrSettings := new System.Xaml.XamlXmlReaderSettings();');
+  sb.AppendLine('    xrSettings.LocalAssembly := System.Reflection.Assembly.GetExecutingAssembly();');
+  sb.AppendLine('    xamlReader  := new System.Xaml.XamlXmlReader(fs, xrSettings);');
+  sb.AppendLine('    objSettings := new System.Xaml.XamlObjectWriterSettings();');
+  sb.AppendLine('    objSettings.RootObjectInstance := Self;');
+  sb.AppendLine('    objWriter   := new System.Xaml.XamlObjectWriter(');
+  sb.AppendLine('                     xamlReader.SchemaContext, objSettings);');
+  sb.AppendLine('    System.Xaml.XamlServices.Transform(xamlReader, objWriter);');
   sb.AppendLine('  finally');
   sb.AppendLine('    fs.Close();');
   sb.AppendLine('  end;');
-  sb.AppendLine('  if content = nil then exit;');
-  sb.AppendLine('');
-  sb.AppendLine('  // Grid 등 콘텐츠를 Window에 직접 배치 (Window→Window 충돌 없음)');
-  sb.AppendLine('  Self.Content := content;');
   sb.AppendLine('');
 
   if controls.Count > 0 then
   begin
-    sb.AppendLine('  // 컨트롤 필드 초기화 (FindName)');
-    sb.AppendLine('  fe := content as System.Windows.FrameworkElement;');
-    sb.AppendLine('  if fe = nil then exit;');
-    sb.AppendLine('');
+    sb.AppendLine('  // 컨트롤 필드 초기화 (FindName) — Self가 루트이므로 직접 가능');
     foreach ctrl in controls do
     begin
       var wpfType := 'System.Windows.Controls.' + ctrl.TypeName;
@@ -594,7 +514,7 @@ begin
         'Window', 'UserControl', 'Page': wpfType := 'System.Windows.' + ctrl.TypeName;
         'TextBlock', 'Image'           : wpfType := 'System.Windows.Controls.' + ctrl.TypeName;
       end;
-      sb.AppendLine('  ' + ctrl.Name + ' := fe.FindName(' + #39 + ctrl.Name + #39 + ')' +
+      sb.AppendLine('  ' + ctrl.Name + ' := Self.FindName(' + #39 + ctrl.Name + #39 + ')' +
         ' as ' + wpfType + ';');
     end;
     sb.AppendLine('');
@@ -648,11 +568,13 @@ begin
   sb.AppendLine('{$reference PresentationCore.dll}');
   sb.AppendLine('{$reference WindowsBase.dll}');
   sb.AppendLine('{$reference System.Windows.Forms.dll}');
+  sb.AppendLine('{$reference System.Xaml.dll}');   // ★ 추가
   sb.AppendLine('');
   sb.AppendLine('uses');
   sb.AppendLine('  System.Windows,');
   sb.AppendLine('  System.Windows.Controls,');
   sb.AppendLine('  System.Windows.Markup,');
+  sb.AppendLine('  System.Xaml,');                 // ★ 추가
   sb.AppendLine('  System.IO,');
   sb.AppendLine('  System.Threading;');
   sb.AppendLine('');
@@ -774,11 +696,13 @@ begin
   sb.AppendLine('{$reference PresentationFramework.dll}');
   sb.AppendLine('{$reference PresentationCore.dll}');
   sb.AppendLine('{$reference WindowsBase.dll}');
+  sb.AppendLine('{$reference System.Xaml.dll}');   // ★ 추가  
   sb.AppendLine('');
   sb.AppendLine('uses');
   sb.AppendLine('  System.Windows,');
   sb.AppendLine('  System.Windows.Controls,');
   sb.AppendLine('  System.Windows.Markup,');
+  sb.AppendLine('  System.Xaml,');                 // ★ 추가
   sb.AppendLine('  System.IO;');
   sb.AppendLine('');
   sb.AppendLine('type');
@@ -1044,7 +968,7 @@ begin
 
   try
     // ★ 수정: Window 래핑 대신 내부 콘텐츠(Grid 등)만 추출하여 저장
-    buildXaml := ExtractInnerXamlForBuild(fXamlEditor.Text);
+    buildXaml := PrepareXamlForBuild(fXamlEditor.Text);
     System.IO.File.WriteAllText(xamlPath, buildXaml, System.Text.Encoding.UTF8);
     System.IO.File.WriteAllText(pasPath, fCodeEditor.Text, System.Text.Encoding.UTF8);
   except
@@ -1371,18 +1295,17 @@ begin
   fXamlEditor.Text := xaml;
 end;
 
-// =============================================================================
-// PreprocessXaml
-// =============================================================================
 function Form1.PreprocessXaml(xaml: string): string;
 var
-  s       : string;
-  re      : System.Text.RegularExpressions.Regex;
-  doc     : System.Xml.XmlDocument;
-  root    : System.Xml.XmlElement;
-  inner   : string;
-  w, h    : string;
-  sizeStr : string;
+  s        : string;
+  re       : System.Text.RegularExpressions.Regex;
+  doc      : System.Xml.XmlDocument;
+  root     : System.Xml.XmlElement;
+  inner    : string;
+  resInner : string;
+  bgInner  : string;
+  w, h     : string;
+  sizeStr  : string;
 begin
   s := xaml;
 
@@ -1390,7 +1313,6 @@ begin
 
   re := new System.Text.RegularExpressions.Regex('\s+x:Class\s*=\s*"[^"]*"');
   s  := re.Replace(s, '');
-
   re := new System.Text.RegularExpressions.Regex('\s+mc:Ignorable\s*=\s*"[^"]*"');
   s  := re.Replace(s, '');
   re := new System.Text.RegularExpressions.Regex('\s+xmlns:mc\s*=\s*"[^"]*"');
@@ -1405,27 +1327,52 @@ begin
   begin
     s := StripCustomNamespaces(s);
     try
-      doc := new System.Xml.XmlDocument();
+      doc  := new System.Xml.XmlDocument();
       doc.LoadXml(s);
-      root  := doc.DocumentElement;
-      inner := root.InnerXml;
-      w     := root.GetAttribute('Width');
-      h     := root.GetAttribute('Height');
+      root := doc.DocumentElement;
+
+      w := root.GetAttribute('Width');
+      h := root.GetAttribute('Height');
       if w = '' then w := root.GetAttribute('d:DesignWidth');
       if h = '' then h := root.GetAttribute('d:DesignHeight');
       if w = '' then w := '800';
       if h = '' then h := '450';
       sizeStr := ' Width="' + w + '" Height="' + h + '"';
+
+      // 속성 요소(Window.Background, Window.Resources)와
+      // 실제 콘텐츠 자식을 분리
+      resInner := '';
+      bgInner  := '';
+      inner    := '';
+      var n: System.Xml.XmlNode;
+      foreach n in root.ChildNodes do
+      begin
+        if n.NodeType <> System.Xml.XmlNodeType.Element then continue;
+        if n.LocalName.EndsWith('.Resources') then
+          resInner := (n as System.Xml.XmlElement).InnerXml
+        else if n.LocalName.EndsWith('.Background') then
+          bgInner := (n as System.Xml.XmlElement).InnerXml
+        else if not n.LocalName.Contains('.') then
+          inner := inner + n.OuterXml;
+        // 그 외 속성 요소(Window.Style 등)는 디자이너 미리보기에서 무시
+      end;
     except
-      inner   := '';
-      sizeStr := ' Width="800" Height="450"';
+      inner    := '';
+      resInner := '';
+      bgInner  := '';
+      sizeStr  := ' Width="800" Height="450"';
     end;
+
+    var resBlock := '';
+    if resInner <> '' then resBlock := '<Grid.Resources>' + resInner + '</Grid.Resources>';
+    var bgBlock := '';
+    if bgInner <> '' then bgBlock := '<Grid.Background>' + bgInner + '</Grid.Background>';
 
     Result :=
       '<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"' +
       '      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"' +
       sizeStr + '>' +
-      inner + '</Grid>';
+      resBlock + bgBlock + inner + '</Grid>';
     exit;
   end;
 
@@ -2353,7 +2300,7 @@ end;
 procedure Form1.OnAbout(sender: System.Object; e: System.EventArgs);
 begin
   System.Windows.Forms.MessageBox.Show(
-    'PascalABC-WPF-Designer Ver 2.0.0' + System.Environment.NewLine + System.Environment.NewLine +
+    'PascalABC-WPF-Designer Ver 2.0.1' + System.Environment.NewLine + System.Environment.NewLine +
     '■ VS 호환 XAML 지원' + System.Environment.NewLine +
     '  · x:Class, x:Name, 이벤트 속성 100% 호환' + System.Environment.NewLine +
     '  · mc:Ignorable, d:DesignHeight/Width 지원' + System.Environment.NewLine + System.Environment.NewLine +

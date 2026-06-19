@@ -253,7 +253,7 @@ type
 constructor Form1.Create;
 begin
   inherited Create;
-  Self.Text   := 'PascalABC-WPF-Designer Ver 2.0.1';
+  Self.Text   := 'PascalABC-WPF-Designer Ver 2.0.2';
   Self.Width  := 1600;
   Self.Height := 950;
 
@@ -557,7 +557,7 @@ begin
   ParseXClassInfo(xaml, fNamespace, fClassName);
   controls := ParseControlsFromXaml(xaml);
 
-  programName := fClassName + 'App';
+  programName := fNamespace;  // XAML x:Class의 네임스페이스와 일치 //fClassName + 'App';
 
   sb := new System.Text.StringBuilder();
 
@@ -2300,7 +2300,7 @@ end;
 procedure Form1.OnAbout(sender: System.Object; e: System.EventArgs);
 begin
   System.Windows.Forms.MessageBox.Show(
-    'PascalABC-WPF-Designer Ver 2.0.1' + System.Environment.NewLine + System.Environment.NewLine +
+    'PascalABC-WPF-Designer Ver 2.0.2' + System.Environment.NewLine + System.Environment.NewLine +
     '■ VS 호환 XAML 지원' + System.Environment.NewLine +
     '  · x:Class, x:Name, 이벤트 속성 100% 호환' + System.Environment.NewLine +
     '  · mc:Ignorable, d:DesignHeight/Width 지원' + System.Environment.NewLine + System.Environment.NewLine +

@@ -1,6 +1,9 @@
 # PascalABC-WPF-Xaml-Designer
 PascalABC.net 개발툴을 활용한 pascal wpf xaml Designer
 
+[Ver 2.0.2]
+기본 예제 빌드 후 실행시 program 이름을 fNamespace와 불일치 해결
+
 [Ver 2.0.1]
 
 * function  ExtractInnerXamlForBuild 을 function  PrepareXamlForBuild 로 함수 교체

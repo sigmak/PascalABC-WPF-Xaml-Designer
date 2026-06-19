@@ -29,6 +29,10 @@ type
     fXamlFileName : string;  // MainWindow.xaml
     fPasFileName  : string;  // MainWindow.pas
 
+    // 빌드/실행 시 exe 파일 잠금(IOException) 방지를 위해
+    // 마지막으로 실행한 프로세스를 추적한다.
+    fRunningProcess : System.Diagnostics.Process;
+
     menuStrip     : System.Windows.Forms.MenuStrip;
     hostDesign    : System.Windows.Forms.Integration.ElementHost;
     hostLeft      : System.Windows.Forms.Integration.ElementHost;
@@ -74,6 +78,7 @@ type
     procedure OnTabChanged(sender: System.Object; e: System.EventArgs);
 
     procedure FormKeyDown(sender: System.Object; ke: System.Windows.Forms.KeyEventArgs);
+    procedure OnFormClosing(sender: System.Object; e: System.Windows.Forms.FormClosingEventArgs);
 
     // 파일 메뉴
     procedure OnNewProject(sender: System.Object; e: System.EventArgs);
@@ -96,6 +101,7 @@ type
     procedure OnErrorsCopy(sender: System.Object; e: System.EventArgs);
     procedure OnErrorsKeyDown(sender: System.Object; e: System.Windows.Forms.KeyEventArgs);
 
+    procedure KillPreviousBuildProcesses;
     // 폴딩
     procedure UpdateFolding;
     procedure OnFoldingTimerTick(sender: System.Object; e: System.EventArgs);
@@ -110,6 +116,7 @@ type
     function  SaveDesignerToString: string;
     function  StripCustomNamespaces(xaml: string): string;
     function  PreprocessXaml(xaml: string): string;
+    function  WrapXamlAsWindow(xaml: string): string;
 
     // 프로젝트/코드 생성
     function  GeneratePasCode(xamlFileName: string): string;
@@ -120,11 +127,11 @@ type
     constructor Create;
   end;
 
-// ═════════════════════════════════════════════
+// =============================================================================
 constructor Form1.Create;
 begin
   inherited Create;
-  Self.Text   := 'PascalABC-WPF-Xaml-Designer Ver 1.2.5';
+  Self.Text   := 'PascalABC-WPF-Xaml-Designer Ver 1.3.0';
   Self.Width  := 1600;
   Self.Height := 950;
 
@@ -141,6 +148,8 @@ begin
   BuildLayout;
   BuildMenu;
 
+  Self.FormClosing += OnFormClosing;
+
   LoadXaml(
     '<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"' +
     '      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"' +
@@ -155,9 +164,13 @@ begin
   fCodeEditor.Text := GeneratePasCode(fXamlFileName);
 end;
 
-// ═════════════════════════════════════════════
-// PascalABC.NET WPF 코드비하인드 템플릿 생성
-// unit 이름 = 파일명(MainWindow), 클래스명 = TMainWindow (충돌 방지)
+// =============================================================================
+// GeneratePasCode
+//   - XamlReader.Load(FileStream) 방식 사용: Application.LoadComponent + 상대 URI
+//     는 실행 파일 옆에 XAML이 있어도 리소스 URI 오류가 발생하므로 교체.
+//   - XAML 루트는 Window로 저장되므로(WrapXamlAsWindow) Window로 직접 로드 가능.
+//   - STA 스레드로 WPF Application 실행.
+// =============================================================================
 function Form1.GeneratePasCode(xamlFileName: string): string;
 var
   sb: System.Text.StringBuilder;
@@ -168,13 +181,17 @@ begin
   sb := new System.Text.StringBuilder();
   sb.AppendLine('program ' + unitName + ';');   // ← unit → program
   sb.AppendLine('');
+  sb.AppendLine('{$apptype windows}');
   sb.AppendLine('{$reference PresentationFramework.dll}');
   sb.AppendLine('{$reference PresentationCore.dll}');
   sb.AppendLine('{$reference WindowsBase.dll}');
   sb.AppendLine('');
   sb.AppendLine('uses');
   sb.AppendLine('  System.Windows,');
-  sb.AppendLine('  System.Windows.Controls;');
+  sb.AppendLine('  System.Windows.Controls,');
+  sb.AppendLine('  System.Windows.Markup,');
+  sb.AppendLine('  System.IO,');
+  sb.AppendLine('  System.Threading;');
   sb.AppendLine('');
   sb.AppendLine('type');
   sb.AppendLine('  T' + unitName + ' = class(System.Windows.Window)');
@@ -183,32 +200,123 @@ begin
   sb.AppendLine('  end;');
   sb.AppendLine('');
   sb.AppendLine('constructor T' + unitName + '.Create;');
+  sb.AppendLine('var');
+  sb.AppendLine('  xamlPath : string;');
+  sb.AppendLine('  fs       : System.IO.FileStream;');
+  sb.AppendLine('  loaded   : System.Windows.Window;');
+  sb.AppendLine('  c        : System.Object;');
   sb.AppendLine('begin');
   sb.AppendLine('  inherited Create;');
-  sb.AppendLine('  System.Windows.Application.LoadComponent(');
-  sb.AppendLine('    Self,');
-  sb.AppendLine('    new System.Uri(' + #39 + xamlFileName + #39 + ', System.UriKind.Relative)');
-  sb.AppendLine('  );');
+  sb.AppendLine('  xamlPath := System.IO.Path.Combine(');
+  sb.AppendLine('    System.AppDomain.CurrentDomain.BaseDirectory,');
+  sb.AppendLine('    ' + #39 + xamlFileName + #39 + ');');
+  sb.AppendLine('  fs := new System.IO.FileStream(xamlPath,');
+  sb.AppendLine('          System.IO.FileMode.Open,');
+  sb.AppendLine('          System.IO.FileAccess.Read);');
+  sb.AppendLine('  try');
+  sb.AppendLine('     try');
+  sb.AppendLine('        loaded := System.Windows.Markup.XamlReader.Load(fs)');
+  sb.AppendLine('                  as System.Windows.Window;');
+  sb.AppendLine('     except');
+  sb.AppendLine('        on ex: System.Exception do');
+  sb.AppendLine('        begin');
+  sb.AppendLine('           System.Windows.MessageBox.Show(ex.ToString());');
+  sb.AppendLine('           exit;');
+  sb.AppendLine('        end;');
+  sb.AppendLine('     end;');
+  sb.AppendLine('  finally');
+  sb.AppendLine('    fs.Close();');
+  sb.AppendLine('  end;');
+  sb.AppendLine('  if loaded <> nil then');
+  sb.AppendLine('  begin');
+  sb.AppendLine('    Self.Title  := loaded.Title;');
+  sb.AppendLine('    Self.Width  := loaded.Width;');
+  sb.AppendLine('    Self.Height := loaded.Height;');
+  sb.AppendLine('    c           := loaded.Content;');
+  sb.AppendLine('    loaded.Content := nil;');
+  sb.AppendLine('    Self.Content   := c;');
+  sb.AppendLine('  end;');
   sb.AppendLine('end;');
   sb.AppendLine('');
   sb.AppendLine('// ─── 이벤트 핸들러 ───────────────────────────');
   sb.AppendLine('');
+  sb.AppendLine('procedure RunApp;');
   sb.AppendLine('begin');
   sb.AppendLine('  var app := new System.Windows.Application();');
   sb.AppendLine('  app.Run(new T' + unitName + '());');
+  sb.AppendLine('end;');
+  sb.AppendLine('');
+  sb.AppendLine('begin');
+  sb.AppendLine('  var t := new System.Threading.Thread(RunApp);');
+  sb.AppendLine('  t.SetApartmentState(System.Threading.ApartmentState.STA);');
+  sb.AppendLine('  t.Start();');
+  sb.AppendLine('  t.Join();');
   sb.AppendLine('end.');
   Result := sb.ToString();
 end;
 
-// ═════════════════════════════════════════════
+// =============================================================================
 // 코드 탭에서 사용하는 클래스명 접두사를 가져오는 헬퍼
 function GetClassPrefix(xamlFileName: string): string;
 begin
   Result := 'T' + System.IO.Path.GetFileNameWithoutExtension(xamlFileName);
 end;
 
-// ═════════════════════════════════════════════
-// 디자이너에서 컨트롤 더블클릭 → 이벤트 핸들러 자동 생성
+// =============================================================================
+// WrapXamlAsWindow
+//   디자이너는 Grid 루트로 작업하지만 exe 가 XamlReader 로 로드할 때는
+//   Window 루트가 필요하다. 빌드 시 XAML 저장 전에 이 함수로 래핑한다.
+//   이미 Window 루트이면 그대로 반환.
+// =============================================================================
+function Form1.WrapXamlAsWindow(xaml: string): string;
+var
+  trimmed: string;
+begin
+  // SaveDesigner()가 만든 XmlWriter는 StringWriter를 UTF-16으로 인식해
+  // '<?xml version="1.0" encoding="utf-16"?>' 선언을 문자열 맨 앞에 붙인다.
+  // 이 선언이 <Window> 태그 안쪽 중간에 끼면 XML 자체가 invalid가 되어
+  // 런타임 XamlReader.Load가 예외를 던지고(별도 STA 스레드라 메시지 없이
+  // 그냥 종료) 프로그램이 "아무 반응 없이" 멈춘 것처럼 보인다.
+  // 따라서 감싸기 전에 항상 XML 선언을 제거한다.
+  trimmed := xaml.TrimStart();
+  if trimmed.StartsWith('<?xml') then
+  begin
+    var declEnd := trimmed.IndexOf('?>');
+    if declEnd >= 0 then
+      trimmed := trimmed.Substring(declEnd + 2).TrimStart();
+  end;
+  xaml := trimmed;
+
+  if trimmed.StartsWith('<Window ') or trimmed.StartsWith('<Window>') then
+  begin
+    Result := xaml;
+    exit;
+  end;
+
+  // Grid/StackPanel/Canvas 등을 Window 로 감싸기
+  // Width/Height 를 Grid에서 파싱해 Window 속성으로 올린다
+  var winWidth  := '600';
+  var winHeight := '400';
+  try
+    var doc  := new System.Xml.XmlDocument();
+    doc.LoadXml(xaml);
+    var root := doc.DocumentElement;
+    if root.HasAttribute('Width')  then winWidth  := root.GetAttribute('Width');
+    if root.HasAttribute('Height') then winHeight := root.GetAttribute('Height');
+  except
+  end;
+
+  Result :=
+    '<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"' +
+    '        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"' +
+    '        Title="MainWindow"' +
+    '        Width="' + winWidth + '"' +
+    '        Height="' + winHeight + '">' +
+    xaml.Trim() +
+    '</Window>';
+end;
+
+// =============================================================================
 procedure Form1.OnDesignerDoubleClick(sender: System.Object;
   e: System.Windows.Input.MouseButtonEventArgs);
 var
@@ -276,7 +384,7 @@ begin
     System.Windows.Forms.MessageBoxIcon.Information);
 end;
 
-// ═════════════════════════════════════════════
+// =============================================================================
 // XAML에 이벤트 속성 추가
 procedure Form1.AddEventHandlerToXaml(controlName: string; eventName: string; handlerName: string);
 var
@@ -305,7 +413,7 @@ begin
   fXamlEditor.Text := xaml;
 end;
 
-// ═════════════════════════════════════════════
+// =============================================================================
 // 코드 파일에 이벤트 핸들러 추가
 procedure Form1.AddEventHandlerToCode(handlerName: string);
 var
@@ -354,7 +462,7 @@ begin
   fCodeEditor.Text := code;
 end;
 
-// ═════════════════════════════════════════════
+// =============================================================================
 // pabcnetc.exe 경로 탐색
 function Form1.FindPabcCompiler: string;
 var
@@ -415,12 +523,64 @@ begin
   end;
 end;
 
-// ═════════════════════════════════════════════
-// 빌드:
-//   pabcnetc.exe 는 콘솔 핸들을 직접 사용하므로 stdout 리디렉션 불가.
-//   bat 파일을 통해 UseShellExecute=true 로 정상 콘솔 환경에서 실행하고,
-//   성공 여부는 .exe 파일 생성 여부로 판단한다.
-//   오류 내용은 잠깐 뜨는 콘솔 창에서 확인할 수 있다.
+// =============================================================================
+// KillPreviousBuildProcesses
+//   빌드 결과 exe가 아직 실행 중이면 다음 빌드 시
+//   "다른 프로세스에서 사용 중" IOException이 발생한다.
+//   1) 우리가 직접 Process.Start로 띄운 프로세스(fRunningProcess)를 종료
+//   2) 혹시 다른 경로로 실행된(탐색기 더블클릭 등) 동일 이름 프로세스도
+//      이름 기반으로 찾아서 정리 (안전망)
+//   3) Kill 후 OS가 파일 핸들을 완전히 풀 때까지 약간 대기
+// =============================================================================
+procedure Form1.KillPreviousBuildProcesses;
+var
+  exeNameOnly: string;
+  procs      : array of System.Diagnostics.Process;
+  idx        : integer;
+begin
+  // 1) 우리가 추적 중인 프로세스
+  if fRunningProcess <> nil then
+  begin
+    try
+      if not fRunningProcess.HasExited then
+        fRunningProcess.Kill();
+    except
+    end;
+    fRunningProcess := nil;
+  end;
+
+  // 2) 이름 기반 안전망 (탐색기에서 직접 실행했거나, IDE 재시작 등으로
+  //    fRunningProcess 추적이 끊긴 경우 대비)
+  try
+    exeNameOnly := System.IO.Path.GetFileNameWithoutExtension(fPasFileName);
+    procs := System.Diagnostics.Process.GetProcessesByName(exeNameOnly);
+    for idx := 0 to procs.Length - 1 do
+    begin
+      try
+        if not procs[idx].HasExited then
+        begin
+          procs[idx].Kill();
+          procs[idx].WaitForExit(2000);
+        end;
+      except
+      end;
+    end;
+  except
+  end;
+
+  // 3) Kill 직후 OS 레벨에서 파일 핸들이 풀리기까지 짧게 대기
+  System.Threading.Thread.Sleep(200);
+end;
+
+// =============================================================================
+// OnBuild
+//   1) 이전 실행 인스턴스 종료 (exe 파일 잠금 해제)
+//   2) XAML 을 Window 루트로 래핑해서 저장 (WrapXamlAsWindow)
+//   3) PAS 코드 저장
+//   4) pabcnetc.exe 탐색
+//   5) bat 경유 빌드 (UseShellExecute=true 로 콘솔 핸들 확보)
+//   6) exe 존재 여부로 성공/실패 판단
+// =============================================================================
 procedure Form1.OnBuild(sender: System.Object; e: System.EventArgs);
 var
   xamlPath: string;
@@ -431,19 +591,24 @@ var
   hadError    : boolean;
   errMsg      : string;
   exePath     : string;
+  windowXaml  : string;
 begin
   hadError := false;
   errMsg   := '';
   exitCode := -1;
 
+  // 0) 이전에 실행된 동일 exe가 떠 있으면 종료 (파일 잠금 방지)
+  KillPreviousBuildProcesses();
+
   xamlPath := fProjectPath + fXamlFileName;
   pasPath  := fProjectPath + fPasFileName;
   tempBat  := fProjectPath + 'build.bat';
 
-  
+  // 1) XAML 을 Window 루트로 래핑 후 저장
   try
     // 1) XAML파일 저장
-    System.IO.File.WriteAllText(xamlPath, fXamlEditor.Text, System.Text.Encoding.UTF8);
+    windowXaml := WrapXamlAsWindow(fXamlEditor.Text);
+    System.IO.File.WriteAllText(xamlPath, windowXaml, System.Text.Encoding.UTF8);
     // 2) PAS 저장
     System.IO.File.WriteAllText(pasPath,  fCodeEditor.Text, System.Text.Encoding.UTF8);
   except
@@ -507,7 +672,7 @@ begin
     psi.WorkingDirectory := fProjectPath;
     psi.UseShellExecute  := true;
     psi.CreateNoWindow   := false;
-    psi.WindowStyle      := System.Diagnostics.ProcessWindowStyle.Normal;//.Minimized;
+    psi.WindowStyle      := System.Diagnostics.ProcessWindowStyle.Minimized;
 
     var proc := new System.Diagnostics.Process();
     proc.StartInfo := psi;
@@ -530,14 +695,14 @@ begin
     end;
   end;
 
-  // 6) 임시 파일 정리
+  // 5) bat 파일 정리
   try
     if System.IO.File.Exists(tempBat) then System.IO.File.Delete(tempBat);
   except
   end;
   
 
-  // 7) 결과 표시
+  // 6) 결과 표시
   if hadError then
   begin
     lvErrors.Items.Clear();
@@ -581,7 +746,7 @@ begin
   end;
 end;
 
-// ═════════════════════════════════════════════
+// =============================================================================
 // 실행: 빌드 후 EXE 실행
 procedure Form1.OnRun(sender: System.Object; e: System.EventArgs);
 var
@@ -595,7 +760,8 @@ begin
   if System.IO.File.Exists(exePath) then
   begin
     try
-      System.Diagnostics.Process.Start(exePath);
+      // 실행한 프로세스를 추적해야 다음 빌드 시 종료시킬 수 있다.
+      fRunningProcess := System.Diagnostics.Process.Start(exePath);
     except
       on ex: System.Exception do
         System.Windows.Forms.MessageBox.Show('실행 오류: ' + ex.Message);
@@ -608,7 +774,7 @@ begin
       System.Windows.Forms.MessageBoxIcon.Error);
 end;
 
-// ═════════════════════════════════════════════
+// =============================================================================
 // 오류목록 선택 항목을 클립보드로 복사 (탭 구분, 한글 정상)
 procedure Form1.OnErrorsCopy(sender: System.Object; e: System.EventArgs);
 var
@@ -645,7 +811,7 @@ begin
   end;
 end;
 
-// ═════════════════════════════════════════════
+// =============================================================================
 // 빌드 오류 파싱 → 오류 목록에 표시
 procedure Form1.ShowBuildErrors(output: string);
 var
@@ -700,7 +866,7 @@ begin
     System.Windows.Forms.MessageBoxIcon.Error);
 end;
 
-// ═════════════════════════════════════════════
+// =============================================================================
 // 새 프로젝트
 procedure Form1.OnNewProject(sender: System.Object; e: System.EventArgs);
 var
@@ -710,6 +876,9 @@ begin
   dlg.Description := '프로젝트 폴더를 선택하세요';
   if dlg.ShowDialog() = System.Windows.Forms.DialogResult.OK then
   begin
+    // 새 프로젝트로 전환하기 전, 이전 프로젝트의 실행 인스턴스 정리
+    KillPreviousBuildProcesses();
+
     fProjectPath := dlg.SelectedPath + '\';
     LoadXaml(
       '<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"' +
@@ -722,7 +891,7 @@ begin
   end;
 end;
 
-// ═════════════════════════════════════════════
+// =============================================================================
 function Form1.SaveDesignerToString: string;
 var
   sw        : System.IO.StringWriter;
@@ -734,17 +903,22 @@ begin
     Result := '';
     exit;
   end;
-  sw            := new System.IO.StringWriter();
-  xwSettings    := new System.Xml.XmlWriterSettings();
-  xwSettings.Indent      := true;
-  xwSettings.IndentChars := '  ';
+  sw                          := new System.IO.StringWriter();
+  xwSettings                  := new System.Xml.XmlWriterSettings();
+  xwSettings.Indent           := true;
+  xwSettings.IndentChars      := '  ';
+  // StringWriter는 내부적으로 UTF-16으로 인식되어 XmlWriter가
+  // '<?xml version="1.0" encoding="utf-16"?>' 선언을 자동으로 붙인다.
+  // 이 선언이 빌드 시 <Window> 태그 안쪽에 끼면 XML이 invalid가 되어
+  // 런타임에서 조용히 실패하므로, 애초에 선언을 생성하지 않도록 한다.
+  xwSettings.OmitXmlDeclaration := true;
   xw := System.Xml.XmlWriter.Create(sw, xwSettings);
   fSurface.SaveDesigner(xw);
   xw.Flush();
   Result := sw.ToString();
 end;
 
-// ═════════════════════════════════════════════
+// =============================================================================
 // 하단 XAML 에디터를 디자이너 현재 상태로 동기화
 procedure Form1.SyncXamlEditor;
 var
@@ -761,7 +935,7 @@ begin
   end;
 end;
 
-// ═════════════════════════════════════════════
+// =============================================================================
 procedure Form1.UpdateFolding;
 begin
   if (fFoldingManager = nil) or (fFoldingStrategy = nil) then exit;
@@ -809,20 +983,20 @@ begin
   end;
 end;
 
-// ═════════════════════════════════════════════
+// =============================================================================
 function Form1.StripCustomNamespaces(xaml: string): string;
 var
-  prefixes : System.Collections.Generic.List<string>;
-  m        : System.Text.RegularExpressions.Match;
-  re       : System.Text.RegularExpressions.Regex;
-  prefix   : string;
-  s        : string;
+  prefixes: System.Collections.Generic.List<string>;
+  m       : System.Text.RegularExpressions.Match;
+  re      : System.Text.RegularExpressions.Regex;
+  prefix  : string;
+  s       : string;
 begin
   s        := xaml;
   prefixes := new System.Collections.Generic.List<string>();
 
   // ① clr-namespace xmlns 선언에서 prefix 목록 수집
-  re := new System.Text.RegularExpressions.Regex(
+  re       := new System.Text.RegularExpressions.Regex(
     'xmlns:(\w+)="clr-namespace:[^"]*"');
   m := re.Match(s);
   while m.Success do
@@ -855,7 +1029,7 @@ begin
   Result := s;
 end;
 
-// ═════════════════════════════════════════════
+// =============================================================================
 function Form1.PreprocessXaml(xaml: string): string;
 var
   cleanedXaml  : string;
@@ -922,11 +1096,11 @@ begin
     resourcesXml + inner + '</Grid>';
 end;
 
-// ═════════════════════════════════════════════
+// =============================================================================
 procedure Form1.BuildMenu;
 var
   fileMenu : System.Windows.Forms.ToolStripMenuItem;
-  viewMenu: System.Windows.Forms.ToolStripMenuItem;
+  viewMenu : System.Windows.Forms.ToolStripMenuItem;
   buildMenu: System.Windows.Forms.ToolStripMenuItem;
   newItem, openItem, saveItem, syncItem, applyItem: System.Windows.Forms.ToolStripMenuItem;
   buildItem, runItem: System.Windows.Forms.ToolStripMenuItem;
@@ -947,7 +1121,7 @@ begin
   fileMenu.DropDownItems.Add(saveItem);
 
   // ── 보기 메뉴 ──
-  viewMenu              := new System.Windows.Forms.ToolStripMenuItem('보기(&V)');
+  viewMenu  := new System.Windows.Forms.ToolStripMenuItem('보기(&V)');
   applyItem := new System.Windows.Forms.ToolStripMenuItem('XAML 적용(&Y)');
   syncItem  := new System.Windows.Forms.ToolStripMenuItem('XAML 동기화(&X)');
   applyItem.Click += OnApplyXamlMenu;
@@ -956,13 +1130,13 @@ begin
   viewMenu.DropDownItems.Add(syncItem);
   viewMenu.DropDownItems.Add(new System.Windows.Forms.ToolStripSeparator());
 
-  menuItemLineNum       := new System.Windows.Forms.ToolStripMenuItem('라인 번호 표시(&L)');
+  menuItemLineNum              := new System.Windows.Forms.ToolStripMenuItem('라인 번호 표시(&L)');
   menuItemLineNum.CheckOnClick := true;
   menuItemLineNum.Checked      := true;
   menuItemLineNum.Click        += OnToggleLineNumbers;
   viewMenu.DropDownItems.Add(menuItemLineNum);
 
-  menuItemHighlight     := new System.Windows.Forms.ToolStripMenuItem('구문 강조 표시(&I)');
+  menuItemHighlight              := new System.Windows.Forms.ToolStripMenuItem('구문 강조 표시(&I)');
   menuItemHighlight.CheckOnClick := true;
   menuItemHighlight.Checked      := true;   // 기본값: 활성
   menuItemHighlight.Click        += OnToggleHighlight;
@@ -1004,10 +1178,10 @@ begin
 
   // F5/F6 단축키
   Self.KeyPreview := true;
-  Self.KeyDown += FormKeyDown;
+  Self.KeyDown    += FormKeyDown;
 end;
 
-// ═════════════════════════════════════════════
+// =============================================================================
 // 왼쪽 Toolbox (Expander 버전)
 procedure Form1.BuildToolbox;
 var
@@ -1150,7 +1324,7 @@ begin
   hostLeft.Child := scroll;
 end;
 
-// ═════════════════════════════════════════════
+// =============================================================================
 procedure Form1.BuildLayout;
 var
   mainPanel     : System.Windows.Forms.Panel;
@@ -1267,19 +1441,20 @@ begin
   lvErrors.KeyDown           += OnErrorsKeyDown;
 
   // 우클릭 복사 메뉴
-  var errMenu := new System.Windows.Forms.ContextMenuStrip();
+  var errMenu  := new System.Windows.Forms.ContextMenuStrip();
   var copyItem := new System.Windows.Forms.ToolStripMenuItem('복사(&C)' + #9 + 'Ctrl+C');
   copyItem.Click += OnErrorsCopy;
   errMenu.Items.Add(copyItem);
   lvErrors.ContextMenuStrip := errMenu;
-  colMsg  := new System.Windows.Forms.ColumnHeader();
+
+  colMsg       := new System.Windows.Forms.ColumnHeader();
   colMsg.Text  := '오류 메시지';
   colMsg.Width := 500;
-  colLine := new System.Windows.Forms.ColumnHeader();
-  colLine.Text  := '줄';
+  colLine      := new System.Windows.Forms.ColumnHeader();
+  colLine.Text := '줄';
   colLine.Width := 60;
-  colFile := new System.Windows.Forms.ColumnHeader();
-  colFile.Text  := '파일';
+  colFile      := new System.Windows.Forms.ColumnHeader();
+  colFile.Text := '파일';
   colFile.Width := 200;
   lvErrors.Columns.Add(colMsg);
   lvErrors.Columns.Add(colLine);
@@ -1330,18 +1505,18 @@ begin
   fXamlEditor.TextChanged += OnXamlTextChanged;
 end;
 
-// ═════════════════════════════════════════════
+// =============================================================================
 // 탭 전환 시 처리
 procedure Form1.OnTabChanged(sender: System.Object; e: System.EventArgs);
 begin
   // 디자인 탭으로 돌아올 때 코드 에디터의 내용을 저장해두는 처리 등 가능
   if tabControl.SelectedTab = tabDesign then
   begin
-    // 디자인 탭 전환 시 특별 처리 없음
+    // 필요 시 디자인 뷰 갱신 처리
   end;
 end;
 
-// ═════════════════════════════════════════════
+// =============================================================================
 procedure Form1.LoadDesigner(designXaml: string);
 var
   strReader: System.IO.StringReader;
@@ -1376,7 +1551,7 @@ begin
     EnableFolding();
 end;
 
-// ═════════════════════════════════════════════
+// =============================================================================
 procedure Form1.LoadXaml(xaml: string);
 var
   designXaml: string;
@@ -1407,7 +1582,7 @@ begin
   end;
 end;
 
-// ═════════════════════════════════════════════
+// =============================================================================
 // 이벤트 연결
 procedure Form1.ConnectEvents;
 var
@@ -1431,7 +1606,7 @@ begin
   fSurface.MouseDoubleClick += OnDesignerDoubleClick;
 end;
 
-// ═════════════════════════════════════════════
+// =============================================================================
 // 선택 변경 → PropertyGrid 업데이트
 procedure Form1.OnSelectionChanged(sender: System.Object;
   e: ICSharpCode.WpfDesign.DesignItemCollectionEventArgs);
@@ -1441,17 +1616,21 @@ begin
     fSurface.DesignContext.Services.Selection.SelectedItems;
 end;
 
-// ═════════════════════════════════════════════
+// =============================================================================
 // 디자인 변경(드래그/크기/속성) → XAML 자동 동기화
 procedure Form1.OnUndoStackChanged(sender: System.Object; e: System.EventArgs);
 begin
   SyncXamlEditor();
 end;
 
-// ═════════════════════════════════════════════
+// =============================================================================
+// OnSave
+//   - XAML 탭 내용(Grid 루트)을 그대로 .xaml 로 저장한다.
+//   - 빌드 시에는 WrapXamlAsWindow 로 래핑하므로 여기선 원본 보존.
+// =============================================================================
 procedure Form1.OnSave(sender: System.Object; e: System.EventArgs);
 var
-  dlg : System.Windows.Forms.SaveFileDialog;
+  dlg: System.Windows.Forms.SaveFileDialog;
 begin
   dlg          := new System.Windows.Forms.SaveFileDialog();
   dlg.Filter   := 'XAML 파일|*.xaml|모든 파일|*.*';
@@ -1475,11 +1654,11 @@ begin
   end;
 end;
 
-// ═════════════════════════════════════════════
+// =============================================================================
 procedure Form1.OnOpen(sender: System.Object; e: System.EventArgs);
 var
-  dlg : System.Windows.Forms.OpenFileDialog;
-  xaml: string;
+  dlg    : System.Windows.Forms.OpenFileDialog;
+  xaml   : string;
   pasPath: string;
 begin
   dlg        := new System.Windows.Forms.OpenFileDialog();
@@ -1496,6 +1675,9 @@ begin
     end;
   end;
 
+  // 다른 프로젝트를 여는 경우, 이전 프로젝트의 실행 인스턴스를 정리
+  KillPreviousBuildProcesses();
+
   fProjectPath  := System.IO.Path.GetDirectoryName(dlg.FileName) + '\';
   fXamlFileName := System.IO.Path.GetFileName(dlg.FileName);
   fPasFileName  := System.IO.Path.ChangeExtension(fXamlFileName, '.pas');
@@ -1511,7 +1693,7 @@ begin
     fCodeEditor.Text := GeneratePasCode(fXamlFileName);
 end;
 
-// ═════════════════════════════════════════════
+// =============================================================================
 // 하단 XAML → 디자이너 적용
 // XAML 에디터에서 붙여넣기 후 적용
 // Window/UserControl 루트도 자동 전처리하여 디자이너에 반영
@@ -1533,21 +1715,21 @@ begin
   LoadXaml(xaml);
 end;
 
-// ═════════════════════════════════════════════
+// =============================================================================
 // 메뉴: 수동 동기화
 procedure Form1.OnSyncXamlMenu(sender: System.Object; e: System.EventArgs);
 begin
   SyncXamlEditor();
 end;
 
-// ═════════════════════════════════════════════
+// =============================================================================
 procedure Form1.OnToggleLineNumbers(sender: System.Object; e: System.EventArgs);
 begin
   fXamlEditor.ShowLineNumbers := menuItemLineNum.Checked;
   fCodeEditor.ShowLineNumbers := menuItemLineNum.Checked;
 end;
 
-// ═════════════════════════════════════════════
+// =============================================================================
 // 구문 강조 ON/OFF 토글
 procedure Form1.OnToggleHighlight(sender: System.Object; e: System.EventArgs);
 begin
@@ -1573,7 +1755,7 @@ begin
     DisableFolding();
 end;
 
-// ═════════════════════════════════════════════
+// =============================================================================
 procedure Form1.OnToolboxClick(sender: System.Object; e: System.Windows.RoutedEventArgs);
 var
   tname    : string;
@@ -1624,7 +1806,7 @@ begin
   end;
 end;
 
-// ═════════════════════════════════════════════
+// =============================================================================
 procedure Form1.FormKeyDown(sender: System.Object; ke: System.Windows.Forms.KeyEventArgs);
 begin
   if ke.KeyCode = System.Windows.Forms.Keys.F5 then
@@ -1633,13 +1815,23 @@ begin
     OnBuild(sender, System.EventArgs.Empty);
 end;
 
+// =============================================================================
+// FormClosing
+//   디자이너 창을 닫을 때 실행 중인 자식 프로세스(테스트 실행한 WPF 앱)를
+//   같이 정리해서, 다음 번 디자이너 실행 시 같은 임시 폴더를 사용해도
+//   exe 파일 잠금 문제가 남지 않도록 한다.
+// =============================================================================
+procedure Form1.OnFormClosing(sender: System.Object; e: System.Windows.Forms.FormClosingEventArgs);
+begin
+  KillPreviousBuildProcesses();
+end;
 
 // Help > About
 procedure Form1.OnAbout(sender: System.Object; e: System.EventArgs);
 begin
   System.Windows.Forms.MessageBox.Show(
     'PascalABC-WPF-Xaml-Designer' + System.Environment.NewLine +
-    'Ver 1.2.5' + System.Environment.NewLine + System.Environment.NewLine +
+    'Ver 1.3.0' + System.Environment.NewLine + System.Environment.NewLine +
     'ICSharpCode.WpfDesign.Designer' + System.Environment.NewLine +
     'ICSharpCode.WpfDesign' + System.Environment.NewLine +
     'ICSharpCode.WpfDesign.XamlDom' + System.Environment.NewLine +
@@ -1654,7 +1846,7 @@ begin
   );
 end;
 
-// ═════════════════════════════════════════════
+// =============================================================================
 begin
   System.Threading.Thread.CurrentThread.SetApartmentState(
     System.Threading.ApartmentState.STA

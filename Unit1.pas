@@ -14,124 +14,247 @@ uses
   System.Collections.Generic,
   ICSharpCode.WpfDesign;
 
+// =============================================================================
+// WPF 이벤트 이름 목록 (XAML 파싱 시 이벤트 속성 식별에 사용)
+// =============================================================================
+const
+  WPF_EVENTS: array of string = [
+    'Click', 'DoubleClick', 'MouseDown', 'MouseUp', 'MouseMove',
+    'MouseEnter', 'MouseLeave', 'MouseWheel', 'KeyDown', 'KeyUp',
+    'KeyPress', 'TextChanged', 'TextInput', 'SelectionChanged',
+    'Checked', 'Unchecked', 'ValueChanged', 'Loaded', 'Unloaded',
+    'GotFocus', 'LostFocus', 'SizeChanged', 'LayoutUpdated',
+    'SourceUpdated', 'TargetUpdated', 'DataContextChanged',
+    'IsVisibleChanged', 'IsEnabledChanged',
+    'PreviewMouseDown', 'PreviewMouseUp', 'PreviewKeyDown', 'PreviewKeyUp',
+    'DragEnter', 'DragLeave', 'DragOver', 'Drop',
+    'ScrollChanged', 'ContextMenuOpening', 'ContextMenuClosing',
+    'ToolTipOpening', 'ToolTipClosing',
+    'RequestBringIntoView', 'ManipulationStarted', 'ManipulationDelta',
+    'ManipulationCompleted', 'Expanded', 'Collapsed',
+    'SelectedItemChanged', 'NodeExpanded', 'NodeCollapsed'
+  ];
+
+// =============================================================================
+// 새 프로젝트 타입
+// =============================================================================
+type
+  TProjectType = (ptWpfApp, ptWpfControlLibrary);
+
+// =============================================================================
+// XAML에서 파싱된 컨트롤 정보
+// =============================================================================
+type
+  TControlInfo = class
+    Name     : string;
+    TypeName : string;
+    Events   : System.Collections.Generic.List<System.Tuple<string,string>>;
+    constructor Create(aName, aTypeName: string);
+  end;
+
+constructor TControlInfo.Create(aName, aTypeName: string);
+begin
+  Name     := aName;
+  TypeName := aTypeName;
+  Events   := new System.Collections.Generic.List<System.Tuple<string,string>>();
+end;
+
+// =============================================================================
+// 전역 헬퍼 함수
+// =============================================================================
+function GetEventDelegateType(ctrlType: string; evName: string): string;
+var
+  rStr : string;
+begin
+  case evName of
+    'Click', 'Checked', 'Unchecked', 'Loaded', 'Unloaded',
+    'GotFocus', 'LostFocus':
+      rStr := 'System.Windows.RoutedEventHandler';
+    'MouseDown', 'MouseUp', 'PreviewMouseDown', 'PreviewMouseUp':
+      rStr := 'System.Windows.Input.MouseButtonEventHandler';
+    'MouseMove', 'MouseEnter', 'MouseLeave':
+      rStr := 'System.Windows.Input.MouseEventHandler';
+    'KeyDown', 'KeyUp', 'PreviewKeyDown', 'PreviewKeyUp':
+      rStr := 'System.Windows.Input.KeyEventHandler';
+    'TextChanged':
+      rStr := 'System.Windows.Controls.TextChangedEventHandler';
+    'SelectionChanged':
+      rStr := 'System.Windows.Controls.SelectionChangedEventHandler';
+    'ValueChanged':
+      rStr := 'System.Windows.RoutedPropertyChangedEventHandler<double>';
+  else
+    rStr := 'System.EventHandler';
+  end;
+  Result := rStr;
+end;
+
+function GetEventParamType(ctrlType: string; evName: string): string;
+var
+  rStr : string;
+begin
+  case evName of
+    'Click', 'Checked', 'Unchecked', 'Loaded', 'Unloaded',
+    'GotFocus', 'LostFocus', 'LayoutUpdated':
+      rStr := 'System.Windows.RoutedEventArgs';
+    'MouseDown', 'MouseUp', 'PreviewMouseDown', 'PreviewMouseUp',
+    'DoubleClick':
+      rStr := 'System.Windows.Input.MouseButtonEventArgs';
+    'MouseMove', 'MouseEnter', 'MouseLeave':
+      rStr := 'System.Windows.Input.MouseEventArgs';
+    'MouseWheel':
+      rStr := 'System.Windows.Input.MouseWheelEventArgs';
+    'KeyDown', 'KeyUp', 'PreviewKeyDown', 'PreviewKeyUp':
+      rStr := 'System.Windows.Input.KeyEventArgs';
+    'TextChanged':
+      rStr := 'System.Windows.Controls.TextChangedEventArgs';
+    'SelectionChanged':
+      rStr := 'System.Windows.Controls.SelectionChangedEventArgs';
+    'ValueChanged':
+      rStr := 'System.Windows.RoutedPropertyChangedEventArgs<double>';
+    'SizeChanged':
+      rStr := 'System.Windows.SizeChangedEventArgs';
+    'ScrollChanged':
+      rStr := 'System.Windows.Controls.ScrollChangedEventArgs';
+    'DragEnter', 'DragLeave', 'DragOver', 'Drop':
+      rStr := 'System.Windows.DragEventArgs';
+  else
+    rStr := 'System.EventArgs';
+  end;
+  Result := rStr;
+end;
+
+// =============================================================================
+// Form1
+// =============================================================================
 type
   Form1 = class(System.Windows.Forms.Form)
   private
-    fSurface : ICSharpCode.WpfDesign.Designer.DesignSurface;
-    fPropView: ICSharpCode.WpfDesign.Designer.PropertyGrid.PropertyGridView;
-    fXamlEditor   : ICSharpCode.AvalonEdit.TextEditor;  // XAML 탭 에디터
-    fCodeEditor   : ICSharpCode.AvalonEdit.TextEditor;  // 코드 탭 에디터
+    fSurface  : ICSharpCode.WpfDesign.Designer.DesignSurface;
+    fPropView : ICSharpCode.WpfDesign.Designer.PropertyGrid.PropertyGridView;
+    fXamlEditor : ICSharpCode.AvalonEdit.TextEditor;
+    fCodeEditor : ICSharpCode.AvalonEdit.TextEditor;
     fOriginalXaml : string;
     fLoadingXaml  : boolean;
 
-    // 프로젝트 관련
-    fProjectPath  : string;  // 현재 프로젝트 폴더
-    fXamlFileName : string;  // MainWindow.xaml
-    fPasFileName  : string;  // MainWindow.pas
+    // 프로젝트
+    fProjectPath  : string;
+    fXamlFileName : string;
+    fPasFileName  : string;
+    fProjectType  : TProjectType;
+    fClassName    : string;
+    fNamespace    : string;
 
-    // 빌드/실행 시 exe 파일 잠금(IOException) 방지를 위해
-    // 마지막으로 실행한 프로세스를 추적한다.
     fRunningProcess : System.Diagnostics.Process;
 
     menuStrip     : System.Windows.Forms.MenuStrip;
     hostDesign    : System.Windows.Forms.Integration.ElementHost;
     hostLeft      : System.Windows.Forms.Integration.ElementHost;
     hostRight     : System.Windows.Forms.Integration.ElementHost;
-    hostXaml          : System.Windows.Forms.Integration.ElementHost;
-    hostCode          : System.Windows.Forms.Integration.ElementHost;
+    hostXaml      : System.Windows.Forms.Integration.ElementHost;
+    hostCode      : System.Windows.Forms.Integration.ElementHost;
     fToolboxPanel : System.Windows.Controls.StackPanel;
 
-    // 탭 컨트롤 (디자인 / XAML / 코드)
-    tabControl        : System.Windows.Forms.TabControl;
-    tabDesign         : System.Windows.Forms.TabPage;
-    tabXaml           : System.Windows.Forms.TabPage;
-    tabCode           : System.Windows.Forms.TabPage;
+    tabControl  : System.Windows.Forms.TabControl;
+    tabDesign   : System.Windows.Forms.TabPage;
+    tabXaml     : System.Windows.Forms.TabPage;
+    tabCode     : System.Windows.Forms.TabPage;
 
-    // 오류 목록 패널
-    lvErrors          : System.Windows.Forms.ListView;
-    splitMain         : System.Windows.Forms.SplitContainer;  // 상하 분할 (메인/오류)
-    splitDesign       : System.Windows.Forms.SplitContainer;  // 좌우 분할 (툴박스/탭+속성)
-    splitRight        : System.Windows.Forms.SplitContainer;  // 좌우 분할 (탭/속성)
+    lvErrors    : System.Windows.Forms.ListView;
+    splitMain   : System.Windows.Forms.SplitContainer;
+    splitDesign : System.Windows.Forms.SplitContainer;
+    splitRight  : System.Windows.Forms.SplitContainer;
 
-    // 보기 메뉴 체크 항목
     menuItemLineNum   : System.Windows.Forms.ToolStripMenuItem;
     menuItemHighlight : System.Windows.Forms.ToolStripMenuItem;
     menuItemWordWrap  : System.Windows.Forms.ToolStripMenuItem;
     menuItemFolding   : System.Windows.Forms.ToolStripMenuItem;
 
-    // XML 폴딩
     fFoldingManager  : ICSharpCode.AvalonEdit.Folding.FoldingManager;
     fFoldingStrategy : ICSharpCode.AvalonEdit.Folding.XmlFoldingStrategy;
     fFoldingTimer    : System.Windows.Threading.DispatcherTimer;
+
+    fDlgTxtFolder : System.Windows.Forms.TextBox;
 
     procedure BuildMenu;
     procedure BuildToolbox;
     procedure BuildLayout;
     procedure ConnectEvents;
 
-    // 이벤트 핸들러
-    procedure OnToolboxClick(sender: System.Object; e: System.Windows.RoutedEventArgs); // ← 별도 핸들러
-    // 선언부에서 시그니처 변경
+    procedure OnToolboxClick(sender: System.Object; e: System.Windows.RoutedEventArgs);
     procedure OnDesignerDoubleClick(sender: System.Object; e: System.Windows.Input.MouseButtonEventArgs);
     procedure OnSelectionChanged(sender: System.Object; e: ICSharpCode.WpfDesign.DesignItemCollectionEventArgs);
     procedure OnUndoStackChanged(sender: System.Object; e: System.EventArgs);
     procedure OnTabChanged(sender: System.Object; e: System.EventArgs);
-
     procedure FormKeyDown(sender: System.Object; ke: System.Windows.Forms.KeyEventArgs);
     procedure OnFormClosing(sender: System.Object; e: System.Windows.Forms.FormClosingEventArgs);
 
-    // 파일 메뉴
     procedure OnNewProject(sender: System.Object; e: System.EventArgs);
     procedure OnSave(sender: System.Object; e: System.EventArgs);
     procedure OnOpen(sender: System.Object; e: System.EventArgs);
 
-    // 보기 메뉴
     procedure OnApplyXaml(sender: System.Object; e: System.Windows.RoutedEventArgs);
     procedure OnApplyXamlMenu(sender: System.Object; e: System.EventArgs);
-    procedure OnSyncXamlMenu(sender: System.Object; e: System.EventArgs);  // 메뉴용 WinForms
+    procedure OnSyncXamlMenu(sender: System.Object; e: System.EventArgs);
     procedure OnToggleLineNumbers(sender: System.Object; e: System.EventArgs);
     procedure OnToggleHighlight(sender: System.Object; e: System.EventArgs);
     procedure OnToggleWordWrap(sender: System.Object; e: System.EventArgs);
     procedure OnToggleFolding(sender: System.Object; e: System.EventArgs);
 
-    // 빌드 메뉴
     procedure OnBuild(sender: System.Object; e: System.EventArgs);
     procedure OnRun(sender: System.Object; e: System.EventArgs);
     function  FindPabcCompiler: string;
     procedure OnErrorsCopy(sender: System.Object; e: System.EventArgs);
     procedure OnErrorsKeyDown(sender: System.Object; e: System.Windows.Forms.KeyEventArgs);
-
     procedure KillPreviousBuildProcesses;
-    // 폴딩
+
     procedure UpdateFolding;
     procedure OnFoldingTimerTick(sender: System.Object; e: System.EventArgs);
     procedure EnableFolding;
     procedure DisableFolding;
     procedure OnXamlTextChanged(sender: System.Object; e: System.EventArgs);
     procedure OnAbout(sender: System.Object; e: System.EventArgs);
-    // XAML/코드 처리
+
+    procedure OnBrowseClick(sender: System.Object; e: System.EventArgs);
+
+    // XAML 처리
     procedure LoadXaml(xaml: string);
     procedure LoadDesigner(designXaml: string);
     procedure SyncXamlEditor;
     function  SaveDesignerToString: string;
     function  StripCustomNamespaces(xaml: string): string;
     function  PreprocessXaml(xaml: string): string;
-    function  WrapXamlAsWindow(xaml: string): string;
 
-    // 프로젝트/코드 생성
-    function  GeneratePasCode(xamlFileName: string): string;
+    function  ParseXClassInfo(xaml: string; var ns: string; var cls: string): boolean;
+    function  ParseControlsFromXaml(xaml: string): System.Collections.Generic.List<TControlInfo>;
+    function  IsWpfEvent(attrName: string): boolean;
+    function  StripEventAttributesForRuntime(xaml: string): string;
+
+    // ★ 수정: WrapXamlAsWindowForBuild 대신 ExtractInnerXamlForBuild 사용
+    function  ExtractInnerXamlForBuild(xaml: string): string;
+
+    function  GenerateWpfAppCode(xamlFileName: string): string;
+    function  GenerateControlLibCode(xamlFileName: string): string;
+    function  GenerateInitializeComponent(controls: System.Collections.Generic.List<TControlInfo>): string;
+
     procedure AddEventHandlerToXaml(controlName: string; eventName: string; handlerName: string);
-    procedure AddEventHandlerToCode(handlerName: string);
+    procedure AddEventHandlerToCode(handlerName: string; eventType: string);
+
+    function  ShowNewProjectDialog(var projType: TProjectType; var projName: string; var projFolder: string): boolean;
+    procedure CreateNewProject(projType: TProjectType; projName: string; projFolder: string);
+
     procedure ShowBuildErrors(output: string);
+
   public
     constructor Create;
   end;
 
 // =============================================================================
+// constructor
+// =============================================================================
 constructor Form1.Create;
 begin
   inherited Create;
-  Self.Text   := 'PascalABC-WPF-Xaml-Designer Ver 1.3.0';
+  Self.Text   := 'PascalABC-WPF-Designer Ver 2.0.0';
   Self.Width  := 1600;
   Self.Height := 950;
 
@@ -140,6 +263,9 @@ begin
   fProjectPath  := System.IO.Path.GetTempPath() + 'PascalWpfProject\';
   fXamlFileName := 'MainWindow.xaml';
   fPasFileName  := 'MainWindow.pas';
+  fProjectType  := ptWpfApp;
+  fClassName    := 'MainWindow';
+  fNamespace    := 'MyApp';
 
   if not System.IO.Directory.Exists(fProjectPath) then
     System.IO.Directory.CreateDirectory(fProjectPath);
@@ -150,41 +276,378 @@ begin
 
   Self.FormClosing += OnFormClosing;
 
-  LoadXaml(
-    '<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"' +
-    '      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"' +
-    '      Background="White" Width="600" Height="400">' +
-    '  <Button x:Name="btnHello" Width="100" Height="30" Content="Hello"' +
-    '          HorizontalAlignment="Left" VerticalAlignment="Top"' +
-    '          Margin="20,20,0,0"/>' +
-    '</Grid>'
-  );
+  var defaultXaml :=
+    '<Window x:Class="MyApp.MainWindow"' + #13#10 +
+    '        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"' + #13#10 +
+    '        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"' + #13#10 +
+    '        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"' + #13#10 +
+    '        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"' + #13#10 +
+    '        mc:Ignorable="d"' + #13#10 +
+    '        Title="MainWindow" Height="450" Width="800">' + #13#10 +
+    '    <Grid>' + #13#10 +
+    '        <Button x:Name="btnHello" Content="Hello, WPF!" ' +
+    'HorizontalAlignment="Left" VerticalAlignment="Top" ' +
+    'Margin="20,20,0,0" Width="120" Height="32"' +
+    ' Click="btnHello_Click"/>' + #13#10 +
+    '    </Grid>' + #13#10 +
+    '</Window>';
 
-  // 초기 코드 에디터 내용 생성
-  fCodeEditor.Text := GeneratePasCode(fXamlFileName);
+  LoadXaml(defaultXaml);
+  fCodeEditor.Text := GenerateWpfAppCode(fXamlFileName);
 end;
 
 // =============================================================================
-// GeneratePasCode
-//   - XamlReader.Load(FileStream) 방식 사용: Application.LoadComponent + 상대 URI
-//     는 실행 파일 옆에 XAML이 있어도 리소스 URI 오류가 발생하므로 교체.
-//   - XAML 루트는 Window로 저장되므로(WrapXamlAsWindow) Window로 직접 로드 가능.
-//   - STA 스레드로 WPF Application 실행.
+// ParseXClassInfo
 // =============================================================================
-function Form1.GeneratePasCode(xamlFileName: string): string;
+function Form1.ParseXClassInfo(xaml: string; var ns: string; var cls: string): boolean;
 var
-  sb: System.Text.StringBuilder;
-  unitName: string;
+  re : System.Text.RegularExpressions.Regex;
+  m  : System.Text.RegularExpressions.Match;
 begin
-  unitName := System.IO.Path.GetFileNameWithoutExtension(xamlFileName);
+  Result := false;
+  ns     := 'MyApp';
+  cls    := 'MainWindow';
+
+  re := new System.Text.RegularExpressions.Regex('x:Class\s*=\s*"([^"]+)"');
+  m  := re.Match(xaml);
+  if not m.Success then exit;
+
+  var full := m.Groups[1].Value;
+  var dot  := full.LastIndexOf('.');
+  if dot >= 0 then
+  begin
+    ns  := full.Substring(0, dot);
+    cls := full.Substring(dot + 1);
+  end
+  else
+  begin
+    ns  := '';
+    cls := full;
+  end;
+  Result := true;
+end;
+
+// =============================================================================
+// IsWpfEvent
+// =============================================================================
+function Form1.IsWpfEvent(attrName: string): boolean;
+var
+  ev: string;
+begin
+  foreach ev in WPF_EVENTS do
+    if attrName = ev then
+    begin
+      Result := true;
+      exit;
+    end;
+  Result := false;
+end;
+
+// =============================================================================
+// ParseControlsFromXaml
+// =============================================================================
+function Form1.ParseControlsFromXaml(xaml: string): System.Collections.Generic.List<TControlInfo>;
+var
+  result2 : System.Collections.Generic.List<TControlInfo>;
+  reTag   : System.Text.RegularExpressions.Regex;
+  reAttr  : System.Text.RegularExpressions.Regex;
+  reName  : System.Text.RegularExpressions.Regex;
+  mTag    : System.Text.RegularExpressions.Match;
+  mAttr   : System.Text.RegularExpressions.Match;
+  mName   : System.Text.RegularExpressions.Match;
+  tagText : string;
+  tagName : string;
+  ctrlName: string;
+  info    : TControlInfo;
+begin
+  result2 := new System.Collections.Generic.List<TControlInfo>();
+
+  reTag  := new System.Text.RegularExpressions.Regex(
+    '<([A-Za-z][A-Za-z0-9]*)\s([^>]*?)(?:/>|>)',
+    System.Text.RegularExpressions.RegexOptions.Singleline);
+  reAttr := new System.Text.RegularExpressions.Regex('(\w[\w.]*)\s*=\s*"([^"]*)"');
+  reName := new System.Text.RegularExpressions.Regex('x:Name\s*=\s*"([^"]+)"');
+
+  mTag := reTag.Match(xaml);
+  while mTag.Success do
+  begin
+    tagName := mTag.Groups[1].Value;
+    tagText := mTag.Value;
+
+    mName := reName.Match(tagText);
+    if mName.Success then
+    begin
+      ctrlName := mName.Groups[1].Value;
+      info     := new TControlInfo(ctrlName, tagName);
+
+      mAttr := reAttr.Match(tagText);
+      while mAttr.Success do
+      begin
+        var attrName    := mAttr.Groups[1].Value;
+        var handlerName := mAttr.Groups[2].Value;
+        if IsWpfEvent(attrName) then
+          info.Events.Add(System.Tuple.Create(attrName, handlerName));
+        mAttr := mAttr.NextMatch();
+      end;
+
+      result2.Add(info);
+    end;
+
+    mTag := mTag.NextMatch();
+  end;
+
+  Result := result2;
+end;
+
+// =============================================================================
+// StripEventAttributesForRuntime
+// =============================================================================
+function Form1.StripEventAttributesForRuntime(xaml: string): string;
+var
+  ev  : string;
+  re  : System.Text.RegularExpressions.Regex;
+  s   : string;
+begin
+  s := xaml;
+  foreach ev in WPF_EVENTS do
+  begin
+    re := new System.Text.RegularExpressions.Regex('\s+' + ev + '\s*=\s*"[^"]*"');
+    s  := re.Replace(s, '');
+  end;
+  Result := s;
+end;
+
+// =============================================================================
+// ★ ExtractInnerXamlForBuild
+//   Window/UserControl의 내부 첫 번째 자식 요소(Grid 등)만 추출하여
+//   독립 XAML 파일로 저장한다.
+//   → XamlReader.Load 시 UIElement로 캐스트 가능, Window 충돌 없음.
+// =============================================================================
+function Form1.ExtractInnerXamlForBuild(xaml: string): string;
+var
+  s   : string;
+  re  : System.Text.RegularExpressions.Regex;
+  doc : System.Xml.XmlDocument;
+  root: System.Xml.XmlElement;
+begin
+  s := xaml;
+
+  // XML 선언 제거
+  var trimmed := s.TrimStart();
+  if trimmed.StartsWith('<?xml') then
+  begin
+    var declEnd := trimmed.IndexOf('?>');
+    if declEnd >= 0 then
+      s := trimmed.Substring(declEnd + 2).TrimStart();
+  end;
+
+  // 이벤트 속성 제거
+  s := StripEventAttributesForRuntime(s);
+
+  // x:Class, mc:Ignorable, xmlns:mc, xmlns:d, d:* 제거
+  re := new System.Text.RegularExpressions.Regex('\s+x:Class\s*=\s*"[^"]*"');
+  s  := re.Replace(s, '');
+  re := new System.Text.RegularExpressions.Regex('\s+mc:Ignorable\s*=\s*"[^"]*"');
+  s  := re.Replace(s, '');
+  re := new System.Text.RegularExpressions.Regex('\s+xmlns:mc\s*=\s*"[^"]*"');
+  s  := re.Replace(s, '');
+  re := new System.Text.RegularExpressions.Regex('\s+xmlns:d\s*=\s*"[^"]*"');
+  s  := re.Replace(s, '');
+  re := new System.Text.RegularExpressions.Regex('\s+d:\w+\s*=\s*"[^"]*"');
+  s  := re.Replace(s, '');
+
+  // Window 또는 UserControl 루트이면 첫 번째 자식 요소만 추출
+  var tr := s.TrimStart();
+  if tr.StartsWith('<Window') or tr.StartsWith('<UserControl') then
+  begin
+    try
+      doc  := new System.Xml.XmlDocument();
+      doc.LoadXml(s);
+      root := doc.DocumentElement;
+
+      // 첫 번째 Element 자식 노드 찾기
+      var child : System.Xml.XmlNode := nil;
+      var n: System.Xml.XmlNode;
+      foreach n in root.ChildNodes do
+      begin
+        if n.NodeType = System.Xml.XmlNodeType.Element then
+        begin
+          child := n;
+          break;
+        end;
+      end;
+
+      if child <> nil then
+      begin
+        var newDoc   := new System.Xml.XmlDocument();
+        var imported := newDoc.ImportNode(child, true);
+        newDoc.AppendChild(imported);
+
+        // 루트 요소에 WPF 기본 네임스페이스 추가
+        var rootEl := newDoc.DocumentElement;
+        if rootEl.GetAttribute('xmlns') = '' then
+          rootEl.SetAttribute('xmlns',
+            'http://schemas.microsoft.com/winfx/2006/xaml/presentation');
+        if rootEl.GetAttribute('xmlns:x') = '' then
+          rootEl.SetAttribute('xmlns:x',
+            'http://schemas.microsoft.com/winfx/2006/xaml');
+
+        var sw  := new System.IO.StringWriter();
+        var xws := new System.Xml.XmlWriterSettings();
+        xws.Indent             := true;
+        xws.IndentChars        := '    ';
+        xws.OmitXmlDeclaration := true;
+        var xw := System.Xml.XmlWriter.Create(sw, xws);
+        newDoc.WriteTo(xw);
+        xw.Flush();
+        Result := sw.ToString();
+        exit;
+      end;
+    except
+      on ex: System.Exception do
+      begin
+        // 파싱 실패 시 s 그대로 반환
+      end;
+    end;
+  end;
+
+  // Grid/StackPanel 등 이미 콘텐츠 루트인 경우
+  Result := s;
+end;
+
+// =============================================================================
+// ★ GenerateInitializeComponent (수정)
+//   - XAML 파일에서 UIElement(Grid 등)를 직접 Load
+//   - Self.Content := content (Window→Window 충돌 없음)
+//   - FindName은 content as FrameworkElement 를 통해 수행
+//   - Window Title/Width/Height는 XAML 파싱 후 코드에서 직접 세팅
+// =============================================================================
+function Form1.GenerateInitializeComponent(controls: System.Collections.Generic.List<TControlInfo>): string;
+var
+  sb        : System.Text.StringBuilder;
+  winTitle  : string;
+  winWidth  : string;
+  winHeight : string;
+  doc       : System.Xml.XmlDocument;
+  root      : System.Xml.XmlElement;
+  ctrl      : TControlInfo;
+  ctrl2     : TControlInfo;
+  ev        : System.Tuple<string,string>;
+  hasEvents : boolean;
+begin
+  // XAML에서 Window 속성 파싱
+  winTitle  := fClassName;
+  winWidth  := '800';
+  winHeight := '450';
+  try
+    doc := new System.Xml.XmlDocument();
+    doc.LoadXml(fXamlEditor.Text);
+    root := doc.DocumentElement;
+    if root.HasAttribute('Title')  then winTitle  := root.GetAttribute('Title');
+    if root.HasAttribute('Width')  then winWidth  := root.GetAttribute('Width');
+    if root.HasAttribute('Height') then winHeight := root.GetAttribute('Height');
+  except end;
 
   sb := new System.Text.StringBuilder();
-  sb.AppendLine('program ' + unitName + ';');   // ← unit → program
+  sb.AppendLine('procedure ' + fClassName + '.InitializeComponent;');
+  sb.AppendLine('var');
+  sb.AppendLine('  xamlPath : string;');
+  sb.AppendLine('  fs       : System.IO.FileStream;');
+  sb.AppendLine('  content  : System.Windows.UIElement;');
+  sb.AppendLine('  fe       : System.Windows.FrameworkElement;');
+  sb.AppendLine('begin');
+
+  // Window 속성 직접 세팅
+  sb.AppendLine('  Self.Title  := ' + #39 + winTitle  + #39 + ';');
+  sb.AppendLine('  Self.Width  := ' + winWidth  + ';');
+  sb.AppendLine('  Self.Height := ' + winHeight + ';');
+  sb.AppendLine('');
+
+  // XAML 파일에서 UIElement 로드
+  sb.AppendLine('  xamlPath := System.IO.Path.Combine(');
+  sb.AppendLine('    System.AppDomain.CurrentDomain.BaseDirectory,');
+  sb.AppendLine('    ' + #39 + fXamlFileName + #39 + ');');
+  sb.AppendLine('  fs := new System.IO.FileStream(xamlPath,');
+  sb.AppendLine('          System.IO.FileMode.Open, System.IO.FileAccess.Read);');
+  sb.AppendLine('  try');
+  sb.AppendLine('    content := System.Windows.Markup.XamlReader.Load(fs)');
+  sb.AppendLine('              as System.Windows.UIElement;');
+  sb.AppendLine('  finally');
+  sb.AppendLine('    fs.Close();');
+  sb.AppendLine('  end;');
+  sb.AppendLine('  if content = nil then exit;');
+  sb.AppendLine('');
+  sb.AppendLine('  // Grid 등 콘텐츠를 Window에 직접 배치 (Window→Window 충돌 없음)');
+  sb.AppendLine('  Self.Content := content;');
+  sb.AppendLine('');
+
+  if controls.Count > 0 then
+  begin
+    sb.AppendLine('  // 컨트롤 필드 초기화 (FindName)');
+    sb.AppendLine('  fe := content as System.Windows.FrameworkElement;');
+    sb.AppendLine('  if fe = nil then exit;');
+    sb.AppendLine('');
+    foreach ctrl in controls do
+    begin
+      var wpfType := 'System.Windows.Controls.' + ctrl.TypeName;
+      case ctrl.TypeName of
+        'Window', 'UserControl', 'Page': wpfType := 'System.Windows.' + ctrl.TypeName;
+        'TextBlock', 'Image'           : wpfType := 'System.Windows.Controls.' + ctrl.TypeName;
+      end;
+      sb.AppendLine('  ' + ctrl.Name + ' := fe.FindName(' + #39 + ctrl.Name + #39 + ')' +
+        ' as ' + wpfType + ';');
+    end;
+    sb.AppendLine('');
+
+    hasEvents := false;
+    foreach ctrl2 in controls do
+      if ctrl2.Events.Count > 0 then hasEvents := true;
+
+    if hasEvents then
+    begin
+      sb.AppendLine('  // 이벤트 핸들러 연결');
+      foreach ctrl2 in controls do
+      begin
+        foreach ev in ctrl2.Events do
+        begin
+          sb.AppendLine('  if ' + ctrl2.Name + ' <> nil then');
+          sb.AppendLine('    ' + ctrl2.Name + '.' + ev.Item1 + ' += ' + ev.Item2 + ';');
+        end;
+      end;
+    end;
+  end;
+
+  sb.AppendLine('end;');
+  Result := sb.ToString();
+end;
+
+// =============================================================================
+// GenerateWpfAppCode
+// =============================================================================
+function Form1.GenerateWpfAppCode(xamlFileName: string): string;
+var
+  sb          : System.Text.StringBuilder;
+  controls    : System.Collections.Generic.List<TControlInfo>;
+  ctrl        : TControlInfo;
+  ev          : System.Tuple<string,string>;
+  programName : string;
+  hasEvents   : boolean;
+begin
+  var xaml := fXamlEditor.Text;
+  ParseXClassInfo(xaml, fNamespace, fClassName);
+  controls := ParseControlsFromXaml(xaml);
+
+  programName := fClassName + 'App';
+
+  sb := new System.Text.StringBuilder();
+
+  sb.AppendLine('program ' + programName + ';');
   sb.AppendLine('');
   sb.AppendLine('{$apptype windows}');
   sb.AppendLine('{$reference PresentationFramework.dll}');
   sb.AppendLine('{$reference PresentationCore.dll}');
   sb.AppendLine('{$reference WindowsBase.dll}');
+  sb.AppendLine('{$reference System.Windows.Forms.dll}');
   sb.AppendLine('');
   sb.AppendLine('uses');
   sb.AppendLine('  System.Windows,');
@@ -193,129 +656,646 @@ begin
   sb.AppendLine('  System.IO,');
   sb.AppendLine('  System.Threading;');
   sb.AppendLine('');
+
   sb.AppendLine('type');
-  sb.AppendLine('  T' + unitName + ' = class(System.Windows.Window)');
+  sb.AppendLine('  ' + fClassName + ' = class(System.Windows.Window)');
+
+  if controls.Count > 0 then
+  begin
+    sb.AppendLine('  private');
+    foreach ctrl in controls do
+    begin
+      var wpfType := 'System.Windows.Controls.' + ctrl.TypeName;
+      case ctrl.TypeName of
+        'Window', 'UserControl': wpfType := 'System.Windows.' + ctrl.TypeName;
+      end;
+      sb.AppendLine('    ' + ctrl.Name + ' : ' + wpfType + ';');
+    end;
+  end;
+
+  hasEvents := false;
+  foreach ctrl in controls do
+    if ctrl.Events.Count > 0 then hasEvents := true;
+
+  if hasEvents then
+  begin
+    sb.AppendLine('  // ── 이벤트 핸들러 선언 ─────────────────────');
+    foreach ctrl in controls do
+    begin
+      foreach ev in ctrl.Events do
+      begin
+        var paramType := GetEventParamType(ctrl.TypeName, ev.Item1);
+        sb.AppendLine('    procedure ' + ev.Item2 +
+          '(sender: System.Object; e: ' + paramType + ');');
+      end;
+    end;
+  end;
+
   sb.AppendLine('  public');
   sb.AppendLine('    constructor Create;');
+  sb.AppendLine('    procedure InitializeComponent;');
   sb.AppendLine('  end;');
   sb.AppendLine('');
-  sb.AppendLine('constructor T' + unitName + '.Create;');
-  sb.AppendLine('var');
-  sb.AppendLine('  xamlPath : string;');
-  sb.AppendLine('  fs       : System.IO.FileStream;');
-  sb.AppendLine('  loaded   : System.Windows.Window;');
-  sb.AppendLine('  c        : System.Object;');
+
+  sb.AppendLine('constructor ' + fClassName + '.Create;');
   sb.AppendLine('begin');
   sb.AppendLine('  inherited Create;');
-  sb.AppendLine('  xamlPath := System.IO.Path.Combine(');
-  sb.AppendLine('    System.AppDomain.CurrentDomain.BaseDirectory,');
-  sb.AppendLine('    ' + #39 + xamlFileName + #39 + ');');
-  sb.AppendLine('  fs := new System.IO.FileStream(xamlPath,');
-  sb.AppendLine('          System.IO.FileMode.Open,');
-  sb.AppendLine('          System.IO.FileAccess.Read);');
-  sb.AppendLine('  try');
-  sb.AppendLine('     try');
-  sb.AppendLine('        loaded := System.Windows.Markup.XamlReader.Load(fs)');
-  sb.AppendLine('                  as System.Windows.Window;');
-  sb.AppendLine('     except');
-  sb.AppendLine('        on ex: System.Exception do');
-  sb.AppendLine('        begin');
-  sb.AppendLine('           System.Windows.MessageBox.Show(ex.ToString());');
-  sb.AppendLine('           exit;');
-  sb.AppendLine('        end;');
-  sb.AppendLine('     end;');
-  sb.AppendLine('  finally');
-  sb.AppendLine('    fs.Close();');
-  sb.AppendLine('  end;');
-  sb.AppendLine('  if loaded <> nil then');
-  sb.AppendLine('  begin');
-  sb.AppendLine('    Self.Title  := loaded.Title;');
-  sb.AppendLine('    Self.Width  := loaded.Width;');
-  sb.AppendLine('    Self.Height := loaded.Height;');
-  sb.AppendLine('    c           := loaded.Content;');
-  sb.AppendLine('    loaded.Content := nil;');
-  sb.AppendLine('    Self.Content   := c;');
-  sb.AppendLine('  end;');
+  sb.AppendLine('  InitializeComponent;');
   sb.AppendLine('end;');
   sb.AppendLine('');
-  sb.AppendLine('// ─── 이벤트 핸들러 ───────────────────────────');
+
+  sb.Append(GenerateInitializeComponent(controls));
   sb.AppendLine('');
+
+  if hasEvents then
+  begin
+    sb.AppendLine('// ── 이벤트 핸들러 구현 ──────────────────────────────────');
+    sb.AppendLine('');
+    foreach ctrl in controls do
+    begin
+      foreach ev in ctrl.Events do
+      begin
+        var paramType := GetEventParamType(ctrl.TypeName, ev.Item1);
+        sb.AppendLine('procedure ' + fClassName + '.' + ev.Item2 +
+          '(sender: System.Object; e: ' + paramType + ');');
+        sb.AppendLine('begin');
+        sb.AppendLine('  // TODO: ' + ev.Item2 + ' 구현');
+        sb.AppendLine('end;');
+        sb.AppendLine('');
+      end;
+    end;
+  end;
+
+  sb.AppendLine('// ── 애플리케이션 진입점 ──────────────────────────────────');
   sb.AppendLine('procedure RunApp;');
   sb.AppendLine('begin');
-  sb.AppendLine('  var app := new System.Windows.Application();');
-  sb.AppendLine('  app.Run(new T' + unitName + '());');
+  sb.AppendLine('  try');
+  sb.AppendLine('    var app := new System.Windows.Application();');
+  sb.AppendLine('    app.Run(new ' + fClassName + '());');
+  sb.AppendLine('  except');
+  sb.AppendLine('    on ex: System.Exception do');
+  sb.AppendLine('      System.Windows.Forms.MessageBox.Show(');
+  sb.AppendLine('        ex.ToString(), ' + #39 + '실행 오류' + #39 + ',');
+  sb.AppendLine('        System.Windows.Forms.MessageBoxButtons.OK,');
+  sb.AppendLine('        System.Windows.Forms.MessageBoxIcon.Error);');
+  sb.AppendLine('  end;');
   sb.AppendLine('end;');
   sb.AppendLine('');
   sb.AppendLine('begin');
   sb.AppendLine('  var t := new System.Threading.Thread(RunApp);');
   sb.AppendLine('  t.SetApartmentState(System.Threading.ApartmentState.STA);');
+  sb.AppendLine('  t.IsBackground := false;');
   sb.AppendLine('  t.Start();');
-  sb.AppendLine('  t.Join();');
   sb.AppendLine('end.');
+
   Result := sb.ToString();
 end;
 
 // =============================================================================
-// 코드 탭에서 사용하는 클래스명 접두사를 가져오는 헬퍼
-function GetClassPrefix(xamlFileName: string): string;
+// GenerateControlLibCode
+// =============================================================================
+function Form1.GenerateControlLibCode(xamlFileName: string): string;
+var
+  sb       : System.Text.StringBuilder;
+  controls : System.Collections.Generic.List<TControlInfo>;
+  ctrl     : TControlInfo;
+  ev       : System.Tuple<string,string>;
+  unitName : string;
 begin
-  Result := 'T' + System.IO.Path.GetFileNameWithoutExtension(xamlFileName);
+  var xaml := fXamlEditor.Text;
+  ParseXClassInfo(xaml, fNamespace, fClassName);
+  controls := ParseControlsFromXaml(xaml);
+
+  unitName := fClassName + 'Unit';
+
+  sb := new System.Text.StringBuilder();
+  sb.AppendLine('unit ' + unitName + ';');
+  sb.AppendLine('');
+  sb.AppendLine('{$reference PresentationFramework.dll}');
+  sb.AppendLine('{$reference PresentationCore.dll}');
+  sb.AppendLine('{$reference WindowsBase.dll}');
+  sb.AppendLine('');
+  sb.AppendLine('uses');
+  sb.AppendLine('  System.Windows,');
+  sb.AppendLine('  System.Windows.Controls,');
+  sb.AppendLine('  System.Windows.Markup,');
+  sb.AppendLine('  System.IO;');
+  sb.AppendLine('');
+  sb.AppendLine('type');
+  sb.AppendLine('  ' + fClassName + ' = class(System.Windows.Controls.UserControl)');
+  sb.AppendLine('  private');
+
+  foreach ctrl in controls do
+  begin
+    var wpfType := 'System.Windows.Controls.' + ctrl.TypeName;
+    sb.AppendLine('    ' + ctrl.Name + ' : ' + wpfType + ';');
+  end;
+
+  sb.AppendLine('  public');
+  sb.AppendLine('    constructor Create;');
+  sb.AppendLine('    procedure InitializeComponent;');
+  sb.AppendLine('  end;');
+  sb.AppendLine('');
+  sb.AppendLine('constructor ' + fClassName + '.Create;');
+  sb.AppendLine('begin');
+  sb.AppendLine('  inherited Create;');
+  sb.AppendLine('  InitializeComponent;');
+  sb.AppendLine('end;');
+  sb.AppendLine('');
+  sb.Append(GenerateInitializeComponent(controls));
+  sb.AppendLine('');
+  sb.AppendLine('end.');
+
+  Result := sb.ToString();
 end;
 
 // =============================================================================
-// WrapXamlAsWindow
-//   디자이너는 Grid 루트로 작업하지만 exe 가 XamlReader 로 로드할 때는
-//   Window 루트가 필요하다. 빌드 시 XAML 저장 전에 이 함수로 래핑한다.
-//   이미 Window 루트이면 그대로 반환.
+// ShowNewProjectDialog
 // =============================================================================
-function Form1.WrapXamlAsWindow(xaml: string): string;
+function Form1.ShowNewProjectDialog(var projType: TProjectType; var projName: string; var projFolder: string): boolean;
 var
-  trimmed: string;
+  dlg       : System.Windows.Forms.Form;
+  lblType   : System.Windows.Forms.Label;
+  lstType   : System.Windows.Forms.ListBox;
+  lblName   : System.Windows.Forms.Label;
+  txtName   : System.Windows.Forms.TextBox;
+  lblFolder : System.Windows.Forms.Label;
+  btnBrowse : System.Windows.Forms.Button;
+  btnOk     : System.Windows.Forms.Button;
+  btnCancel : System.Windows.Forms.Button;
 begin
-  // SaveDesigner()가 만든 XmlWriter는 StringWriter를 UTF-16으로 인식해
-  // '<?xml version="1.0" encoding="utf-16"?>' 선언을 문자열 맨 앞에 붙인다.
-  // 이 선언이 <Window> 태그 안쪽 중간에 끼면 XML 자체가 invalid가 되어
-  // 런타임 XamlReader.Load가 예외를 던지고(별도 STA 스레드라 메시지 없이
-  // 그냥 종료) 프로그램이 "아무 반응 없이" 멈춘 것처럼 보인다.
-  // 따라서 감싸기 전에 항상 XML 선언을 제거한다.
-  trimmed := xaml.TrimStart();
-  if trimmed.StartsWith('<?xml') then
-  begin
-    var declEnd := trimmed.IndexOf('?>');
-    if declEnd >= 0 then
-      trimmed := trimmed.Substring(declEnd + 2).TrimStart();
-  end;
-  xaml := trimmed;
+  Result    := false;
+  projType  := ptWpfApp;
+  projName  := 'WpfApp1';
+  projFolder := System.Environment.GetFolderPath(
+    System.Environment.SpecialFolder.MyDocuments);
 
-  if trimmed.StartsWith('<Window ') or trimmed.StartsWith('<Window>') then
+  dlg        := new System.Windows.Forms.Form();
+  dlg.Text   := '새 프로젝트 만들기';
+  dlg.Width  := 560;
+  dlg.Height := 420;
+  dlg.FormBorderStyle := System.Windows.Forms.FormBorderStyle.FixedDialog;
+  dlg.StartPosition   := System.Windows.Forms.FormStartPosition.CenterParent;
+  dlg.MaximizeBox     := false;
+  dlg.MinimizeBox     := false;
+
+  lblType      := new System.Windows.Forms.Label();
+  lblType.Text := '프로젝트 형식';
+  lblType.Left := 16; lblType.Top := 16; lblType.Width := 200;
+  lblType.Font := new System.Drawing.Font('Segoe UI', 9, System.Drawing.FontStyle.Bold);
+
+  lstType          := new System.Windows.Forms.ListBox();
+  lstType.Left     := 16; lstType.Top := 36;
+  lstType.Width    := 510; lstType.Height := 140;
+  lstType.Font     := new System.Drawing.Font('Segoe UI', 10);
+  lstType.Items.Add('WPF 애플리케이션              (.exe)  — Window를 루트로 하는 독립 실행 앱');
+  lstType.Items.Add('WPF 사용자 정의 컨트롤 라이브러리  (.pas)  — UserControl을 상속한 재사용 컨트롤');
+  lstType.SelectedIndex := 0;
+
+  lblName      := new System.Windows.Forms.Label();
+  lblName.Text := '프로젝트 이름';
+  lblName.Left := 16; lblName.Top := 196; lblName.Width := 200;
+  lblName.Font := new System.Drawing.Font('Segoe UI', 9, System.Drawing.FontStyle.Bold);
+
+  txtName        := new System.Windows.Forms.TextBox();
+  txtName.Left   := 16; txtName.Top := 216;
+  txtName.Width  := 510; txtName.Height := 26;
+  txtName.Text   := 'WpfApp1';
+  txtName.Font   := new System.Drawing.Font('Segoe UI', 10);
+
+  lblFolder      := new System.Windows.Forms.Label();
+  lblFolder.Text := '위치';
+  lblFolder.Left := 16; lblFolder.Top := 256; lblFolder.Width := 200;
+  lblFolder.Font := new System.Drawing.Font('Segoe UI', 9, System.Drawing.FontStyle.Bold);
+
+  fDlgTxtFolder        := new System.Windows.Forms.TextBox();
+  fDlgTxtFolder.Left   := 16; fDlgTxtFolder.Top := 276;
+  fDlgTxtFolder.Width  := 420; fDlgTxtFolder.Height := 26;
+  fDlgTxtFolder.Text   := projFolder;
+  fDlgTxtFolder.Font   := new System.Drawing.Font('Segoe UI', 10);
+
+  btnBrowse        := new System.Windows.Forms.Button();
+  btnBrowse.Left   := 444; btnBrowse.Top := 274;
+  btnBrowse.Width  := 82; btnBrowse.Height := 28;
+  btnBrowse.Text   := '찾아보기...';
+  btnBrowse.Click  += OnBrowseClick;
+
+  btnOk              := new System.Windows.Forms.Button();
+  btnOk.Text         := '확인';
+  btnOk.Left         := 356; btnOk.Top := 340;
+  btnOk.Width        := 80; btnOk.Height := 30;
+  btnOk.DialogResult := System.Windows.Forms.DialogResult.OK;
+
+  btnCancel              := new System.Windows.Forms.Button();
+  btnCancel.Text         := '취소';
+  btnCancel.Left         := 444; btnCancel.Top := 340;
+  btnCancel.Width        := 80; btnCancel.Height := 30;
+  btnCancel.DialogResult := System.Windows.Forms.DialogResult.Cancel;
+
+  dlg.Controls.Add(lblType);
+  dlg.Controls.Add(lstType);
+  dlg.Controls.Add(lblName);
+  dlg.Controls.Add(txtName);
+  dlg.Controls.Add(lblFolder);
+  dlg.Controls.Add(fDlgTxtFolder);
+  dlg.Controls.Add(btnBrowse);
+  dlg.Controls.Add(btnOk);
+  dlg.Controls.Add(btnCancel);
+  dlg.AcceptButton := btnOk;
+  dlg.CancelButton := btnCancel;
+
+  if dlg.ShowDialog() = System.Windows.Forms.DialogResult.OK then
   begin
-    Result := xaml;
+    if lstType.SelectedIndex = 1 then
+      projType := ptWpfControlLibrary
+    else
+      projType := ptWpfApp;
+    projName   := txtName.Text.Trim();
+    projFolder := fDlgTxtFolder.Text.Trim();
+    Result     := true;
+  end;
+
+  fDlgTxtFolder := nil;
+end;
+
+// =============================================================================
+// OnBrowseClick
+// =============================================================================
+procedure Form1.OnBrowseClick(sender: System.Object; e: System.EventArgs);
+begin
+  if fDlgTxtFolder = nil then exit;
+  var fd := new System.Windows.Forms.FolderBrowserDialog();
+  fd.SelectedPath := fDlgTxtFolder.Text;
+  if fd.ShowDialog() = System.Windows.Forms.DialogResult.OK then
+    fDlgTxtFolder.Text := fd.SelectedPath;
+end;
+
+// =============================================================================
+// CreateNewProject
+// =============================================================================
+procedure Form1.CreateNewProject(projType: TProjectType; projName: string; projFolder: string);
+var
+  defaultXaml: string;
+begin
+  KillPreviousBuildProcesses();
+
+  fProjectPath  := projFolder + '\' + projName + '\';
+  fProjectType  := projType;
+  fClassName    := projName;
+  fNamespace    := projName;
+
+  if not System.IO.Directory.Exists(fProjectPath) then
+    System.IO.Directory.CreateDirectory(fProjectPath);
+
+  case projType of
+    ptWpfApp:
+    begin
+      fXamlFileName := projName + '.xaml';
+      fPasFileName  := projName + '.pas';
+      defaultXaml :=
+        '<Window x:Class="' + projName + '.' + projName + '"' + #13#10 +
+        '        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"' + #13#10 +
+        '        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"' + #13#10 +
+        '        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"' + #13#10 +
+        '        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"' + #13#10 +
+        '        mc:Ignorable="d"' + #13#10 +
+        '        Title="' + projName + '" Height="450" Width="800">' + #13#10 +
+        '    <Grid>' + #13#10 +
+        '    </Grid>' + #13#10 +
+        '</Window>';
+    end;
+
+    ptWpfControlLibrary:
+    begin
+      fXamlFileName := projName + '.xaml';
+      fPasFileName  := projName + '.pas';
+      defaultXaml :=
+        '<UserControl x:Class="' + projName + '.' + projName + '"' + #13#10 +
+        '             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"' + #13#10 +
+        '             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"' + #13#10 +
+        '             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"' + #13#10 +
+        '             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"' + #13#10 +
+        '             mc:Ignorable="d"' + #13#10 +
+        '             d:DesignHeight="300" d:DesignWidth="400">' + #13#10 +
+        '    <Grid>' + #13#10 +
+        '    </Grid>' + #13#10 +
+        '</UserControl>';
+    end;
+  end;
+
+  LoadXaml(defaultXaml);
+
+  case projType of
+    ptWpfApp:            fCodeEditor.Text := GenerateWpfAppCode(fXamlFileName);
+    ptWpfControlLibrary: fCodeEditor.Text := GenerateControlLibCode(fXamlFileName);
+  end;
+
+  Self.Text := 'PascalABC-WPF-Designer — ' + fProjectPath;
+end;
+
+// =============================================================================
+// OnNewProject
+// =============================================================================
+procedure Form1.OnNewProject(sender: System.Object; e: System.EventArgs);
+var
+  projType  : TProjectType;
+  projName  : string;
+  projFolder: string;
+begin
+  if ShowNewProjectDialog(projType, projName, projFolder) then
+    CreateNewProject(projType, projName, projFolder);
+end;
+
+// =============================================================================
+// OnBuild  ★ 핵심 수정: ExtractInnerXamlForBuild 사용
+// =============================================================================
+procedure Form1.OnBuild(sender: System.Object; e: System.EventArgs);
+var
+  xamlPath    : string;
+  pasPath     : string;
+  tempBat     : string;
+  compilerPath: string;
+  exitCode    : integer;
+  hadError    : boolean;
+  errMsg      : string;
+  exePath     : string;
+  buildXaml   : string;
+begin
+  hadError := false;
+  errMsg   := '';
+  exitCode := -1;
+
+  KillPreviousBuildProcesses();
+
+  ParseXClassInfo(fXamlEditor.Text, fNamespace, fClassName);
+
+  // 코드 탭에 내용이 없을 때만 자동 생성 (사용자 코드 보호)
+  if fCodeEditor.Text.Trim() = '' then
+  begin
+    case fProjectType of
+      ptWpfApp:            fCodeEditor.Text := GenerateWpfAppCode(fXamlFileName);
+      ptWpfControlLibrary: fCodeEditor.Text := GenerateControlLibCode(fXamlFileName);
+    end;
+  end;
+
+  xamlPath := fProjectPath + fXamlFileName;
+  pasPath  := fProjectPath + fPasFileName;
+  tempBat  := fProjectPath + 'build.bat';
+
+  try
+    // ★ 수정: Window 래핑 대신 내부 콘텐츠(Grid 등)만 추출하여 저장
+    buildXaml := ExtractInnerXamlForBuild(fXamlEditor.Text);
+    System.IO.File.WriteAllText(xamlPath, buildXaml, System.Text.Encoding.UTF8);
+    System.IO.File.WriteAllText(pasPath, fCodeEditor.Text, System.Text.Encoding.UTF8);
+  except
+    on ex: System.Exception do
+    begin errMsg := ex.Message; hadError := true; end;
+  end;
+  if hadError then begin
+    System.Windows.Forms.MessageBox.Show('파일 저장 오류: ' + errMsg); exit;
+  end;
+
+  compilerPath := FindPabcCompiler();
+  if compilerPath = '' then
+  begin
+    System.Windows.Forms.MessageBox.Show(
+      'pabcnetc.exe를 찾을 수 없습니다.', '컴파일러 없음',
+      System.Windows.Forms.MessageBoxButtons.OK,
+      System.Windows.Forms.MessageBoxIcon.Warning);
     exit;
   end;
 
-  // Grid/StackPanel/Canvas 등을 Window 로 감싸기
-  // Width/Height 를 Grid에서 파싱해 Window 속성으로 올린다
-  var winWidth  := '600';
-  var winHeight := '400';
   try
-    var doc  := new System.Xml.XmlDocument();
-    doc.LoadXml(xaml);
-    var root := doc.DocumentElement;
-    if root.HasAttribute('Width')  then winWidth  := root.GetAttribute('Width');
-    if root.HasAttribute('Height') then winHeight := root.GetAttribute('Height');
+    var bat := new System.Text.StringBuilder();
+    bat.AppendLine('@echo off');
+    bat.AppendLine('"' + compilerPath + '" "' + pasPath + '"');
+    bat.AppendLine('exit %ERRORLEVEL%');
+    System.IO.File.WriteAllText(tempBat, bat.ToString(), System.Text.Encoding.Default);
   except
+    on ex: System.Exception do
+    begin errMsg := ex.Message; hadError := true; end;
+  end;
+  if hadError then begin
+    System.Windows.Forms.MessageBox.Show('빌드 스크립트 오류: ' + errMsg); exit;
   end;
 
-  Result :=
-    '<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"' +
-    '        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"' +
-    '        Title="MainWindow"' +
-    '        Width="' + winWidth + '"' +
-    '        Height="' + winHeight + '">' +
-    xaml.Trim() +
-    '</Window>';
+  try
+    var psi              := new System.Diagnostics.ProcessStartInfo();
+    psi.FileName         := 'cmd.exe';
+    psi.Arguments        := '/c "' + tempBat + '"';
+    psi.WorkingDirectory := fProjectPath;
+    psi.UseShellExecute  := true;
+    psi.CreateNoWindow   := false;
+    psi.WindowStyle      := System.Diagnostics.ProcessWindowStyle.Minimized;
+    var proc := new System.Diagnostics.Process();
+    proc.StartInfo := psi;
+    proc.Start();
+    proc.WaitForExit(60000);
+    if not proc.HasExited then
+    begin
+      try proc.Kill(); except end;
+      errMsg := '컴파일 시간 초과'; hadError := true;
+    end
+    else
+      exitCode := proc.ExitCode;
+  except
+    on ex: System.Exception do
+    begin errMsg := ex.Message; hadError := true; end;
+  end;
+
+  try
+    if System.IO.File.Exists(tempBat) then System.IO.File.Delete(tempBat);
+  except end;
+
+  if hadError then
+  begin
+    lvErrors.Items.Clear();
+    var item := new System.Windows.Forms.ListViewItem('빌드 오류: ' + errMsg);
+    item.ForeColor := System.Drawing.Color.Red;
+    lvErrors.Items.Add(item);
+    System.Windows.Forms.MessageBox.Show('빌드 오류: ' + errMsg);
+    exit;
+  end;
+
+  exePath := fProjectPath +
+    System.IO.Path.GetFileNameWithoutExtension(fPasFileName) + '.exe';
+
+  if System.IO.File.Exists(exePath) then
+  begin
+    lvErrors.Items.Clear();
+    var item := new System.Windows.Forms.ListViewItem('빌드 성공: ' + exePath);
+    item.ForeColor := System.Drawing.Color.FromArgb(0, 128, 0);
+    lvErrors.Items.Add(item);
+    System.Windows.Forms.MessageBox.Show(
+      '빌드 성공!' + #13#10 + exePath, '빌드',
+      System.Windows.Forms.MessageBoxButtons.OK,
+      System.Windows.Forms.MessageBoxIcon.Information);
+  end
+  else
+  begin
+    lvErrors.Items.Clear();
+    var item := new System.Windows.Forms.ListViewItem(
+      '빌드 실패 — 콘솔 창 오류를 확인하세요. (종료코드: ' + exitCode.ToString() + ')');
+    item.ForeColor := System.Drawing.Color.Red;
+    lvErrors.Items.Add(item);
+    System.Windows.Forms.MessageBox.Show(
+      '빌드 실패 — 콘솔 창의 오류 메시지를 확인하세요.', '빌드 실패',
+      System.Windows.Forms.MessageBoxButtons.OK,
+      System.Windows.Forms.MessageBoxIcon.Error);
+  end;
 end;
 
+// =============================================================================
+// OnRun
+// =============================================================================
+procedure Form1.OnRun(sender: System.Object; e: System.EventArgs);
+var
+  exePath: string;
+begin
+  OnBuild(sender, e);
+  exePath := fProjectPath +
+    System.IO.Path.GetFileNameWithoutExtension(fPasFileName) + '.exe';
+  if System.IO.File.Exists(exePath) then
+  begin
+    try
+      fRunningProcess := System.Diagnostics.Process.Start(exePath);
+    except
+      on ex: System.Exception do
+        System.Windows.Forms.MessageBox.Show('실행 오류: ' + ex.Message);
+    end;
+  end;
+end;
+
+// =============================================================================
+// OnSave
+// =============================================================================
+procedure Form1.OnSave(sender: System.Object; e: System.EventArgs);
+var
+  dlg: System.Windows.Forms.SaveFileDialog;
+begin
+  dlg          := new System.Windows.Forms.SaveFileDialog();
+  dlg.Filter   := 'XAML 파일|*.xaml|모든 파일|*.*';
+  dlg.FileName := fXamlFileName;
+  dlg.InitialDirectory := fProjectPath;
+  if dlg.ShowDialog() = System.Windows.Forms.DialogResult.OK then
+  begin
+    System.IO.File.WriteAllText(dlg.FileName, fXamlEditor.Text, System.Text.Encoding.UTF8);
+    var pasPath := System.IO.Path.ChangeExtension(dlg.FileName, '.pas');
+    System.IO.File.WriteAllText(pasPath, fCodeEditor.Text, System.Text.Encoding.UTF8);
+    fProjectPath  := System.IO.Path.GetDirectoryName(dlg.FileName) + '\';
+    fXamlFileName := System.IO.Path.GetFileName(dlg.FileName);
+    fPasFileName  := System.IO.Path.GetFileName(pasPath);
+    Self.Text := 'PascalABC-WPF-Designer — ' + fProjectPath;
+    System.Windows.Forms.MessageBox.Show(
+      'XAML: ' + dlg.FileName + #13#10 + 'PAS: ' + pasPath + #13#10 + '저장 완료!');
+  end;
+end;
+
+// =============================================================================
+// OnOpen
+// =============================================================================
+procedure Form1.OnOpen(sender: System.Object; e: System.EventArgs);
+var
+  dlg    : System.Windows.Forms.OpenFileDialog;
+  xaml   : string;
+  pasPath: string;
+begin
+  dlg        := new System.Windows.Forms.OpenFileDialog();
+  dlg.Filter := 'XAML 파일|*.xaml|모든 파일|*.*';
+  if dlg.ShowDialog() <> System.Windows.Forms.DialogResult.OK then exit;
+
+  try
+    xaml := System.IO.File.ReadAllText(dlg.FileName);
+  except
+    on ex: System.Exception do
+    begin
+      System.Windows.Forms.MessageBox.Show('읽기 오류: ' + ex.Message);
+      exit;
+    end;
+  end;
+
+  KillPreviousBuildProcesses();
+  fProjectPath  := System.IO.Path.GetDirectoryName(dlg.FileName) + '\';
+  fXamlFileName := System.IO.Path.GetFileName(dlg.FileName);
+  fPasFileName  := System.IO.Path.ChangeExtension(fXamlFileName, '.pas');
+  Self.Text     := 'PascalABC-WPF-Designer — ' + fProjectPath;
+
+  ParseXClassInfo(xaml, fNamespace, fClassName);
+
+  if xaml.Contains('<UserControl') then
+    fProjectType := ptWpfControlLibrary
+  else
+    fProjectType := ptWpfApp;
+
+  LoadXaml(xaml);
+
+  pasPath := fProjectPath + fPasFileName;
+  if System.IO.File.Exists(pasPath) then
+    fCodeEditor.Text := System.IO.File.ReadAllText(pasPath)
+  else
+  begin
+    case fProjectType of
+      ptWpfApp:            fCodeEditor.Text := GenerateWpfAppCode(fXamlFileName);
+      ptWpfControlLibrary: fCodeEditor.Text := GenerateControlLibCode(fXamlFileName);
+    end;
+  end;
+end;
+
+// =============================================================================
+// OnTabChanged
+// =============================================================================
+procedure Form1.OnTabChanged(sender: System.Object; e: System.EventArgs);
+begin
+  if tabControl.SelectedTab = tabCode then
+  begin
+    ParseXClassInfo(fXamlEditor.Text, fNamespace, fClassName);
+    // 코드 탭이 비어있을 때만 자동 생성 (사용자 코드 보호)
+    if fCodeEditor.Text.Trim() = '' then
+    begin
+      case fProjectType of
+        ptWpfApp:            fCodeEditor.Text := GenerateWpfAppCode(fXamlFileName);
+        ptWpfControlLibrary: fCodeEditor.Text := GenerateControlLibCode(fXamlFileName);
+      end;
+    end;
+  end;
+end;
+
+// =============================================================================
+// AddEventHandlerToCode
+// =============================================================================
+procedure Form1.AddEventHandlerToCode(handlerName: string; eventType: string);
+var
+  code   : string;
+  marker : string;
+  paramT : string;
+begin
+  code   := fCodeEditor.Text;
+  marker := '// ── 이벤트 핸들러 구현 ──────────────────────────────────';
+
+  if code.Contains('procedure ' + fClassName + '.' + handlerName) then exit;
+
+  paramT := eventType;
+  if paramT = '' then paramT := 'System.Windows.RoutedEventArgs';
+
+  var handler := new System.Text.StringBuilder();
+  handler.AppendLine('procedure ' + fClassName + '.' + handlerName +
+    '(sender: System.Object; e: ' + paramT + ');');
+  handler.AppendLine('begin');
+  handler.AppendLine('  // TODO: ' + handlerName);
+  handler.AppendLine('end;');
+  handler.AppendLine('');
+
+  if code.Contains(marker) then
+    code := code.Replace(marker,
+      marker + System.Environment.NewLine + System.Environment.NewLine + handler.ToString())
+  else
+    code := code + System.Environment.NewLine + handler.ToString();
+
+  fCodeEditor.Text := code;
+end;
+
+// =============================================================================
+// OnDesignerDoubleClick
 // =============================================================================
 procedure Form1.OnDesignerDoubleClick(sender: System.Object;
   e: System.Windows.Input.MouseButtonEventArgs);
@@ -328,569 +1308,165 @@ var
   handlerName  : string;
 begin
   if fSurface.DesignContext = nil then exit;
-
   selectedItems := fSurface.DesignContext.Services.Selection.SelectedItems;
   if selectedItems.Count = 0 then exit;
 
-  // 첫 번째 선택 아이템
   item := nil;
-  var enumerator := selectedItems.GetEnumerator();
-  if enumerator.MoveNext() then
-    item := enumerator.Current;
+  var en := selectedItems.GetEnumerator();
+  if en.MoveNext() then item := en.Current;
   if item = nil then exit;
 
-  // 컨트롤 이름 (x:Name 속성)
   var nameProp := item.Properties['Name'];
   if (nameProp <> nil) and (nameProp.ValueOnInstance <> nil) then
     controlName := nameProp.ValueOnInstance.ToString()
   else
     controlName := '';
 
-  // 컨트롤 타입명 (짧은 이름)
   controlType := item.ComponentType.Name;
 
-  // 컨트롤 타입별 기본 이벤트 결정
   case controlType of
     'Button'     : eventName := 'Click';
     'TextBox'    : eventName := 'TextChanged';
-    'CheckBox'   : eventName := 'Checked';
-    'ComboBox'   : eventName := 'SelectionChanged';
+    'CheckBox',
+    'RadioButton': eventName := 'Checked';
+    'ComboBox',
     'ListBox'    : eventName := 'SelectionChanged';
     'Slider'     : eventName := 'ValueChanged';
-    'RadioButton': eventName := 'Checked';
-  else
-    eventName := 'Loaded';
+  else             eventName := 'Loaded';
   end;
 
-  // 핸들러명 생성: controlName_eventName 또는 controlType_eventName
   if controlName <> '' then
     handlerName := controlName + '_' + eventName
   else
     handlerName := controlType + '_' + eventName;
 
-  // XAML에 이벤트 속성 추가
   AddEventHandlerToXaml(controlName, eventName, handlerName);
 
-  // 코드에 핸들러 추가
-  AddEventHandlerToCode(handlerName);
+  var paramType := GetEventParamType(controlType, eventName);
+  AddEventHandlerToCode(handlerName, paramType);
 
-  // 코드 탭으로 전환
   tabControl.SelectedTab := tabCode;
 
   System.Windows.Forms.MessageBox.Show(
-    '이벤트 핸들러 생성: ' + handlerName + #13#10 +
-    '코드 탭에서 구현하세요.',
-    '이벤트 연결', System.Windows.Forms.MessageBoxButtons.OK,
+    '이벤트 핸들러 생성: ' + handlerName + #13#10 + '코드 탭에서 구현하세요.',
+    '이벤트 연결',
+    System.Windows.Forms.MessageBoxButtons.OK,
     System.Windows.Forms.MessageBoxIcon.Information);
 end;
 
 // =============================================================================
-// XAML에 이벤트 속성 추가
+// AddEventHandlerToXaml
+// =============================================================================
 procedure Form1.AddEventHandlerToXaml(controlName: string; eventName: string; handlerName: string);
 var
   xaml   : string;
   pattern: string;
-  replace: string;
 begin
   xaml := fXamlEditor.Text;
-
-  // controlName이 있으면 해당 컨트롤 찾아서 이벤트 추가
-  if controlName <> '' then
-  begin
-    // x:Name="controlName" 을 포함한 태그에 이벤트 속성 추가
-    pattern := 'x:Name="' + controlName + '"';
-    if xaml.Contains(pattern) then
-    begin
-      // 이미 이벤트가 있으면 추가하지 않음
-      if not xaml.Contains(eventName + '="' + handlerName + '"') then
-        replace := pattern + ' ' + eventName + '="' + handlerName + '"'
-      else
-        replace := pattern;
-      xaml := xaml.Replace(pattern, replace);
-    end;
-  end;
-
+  if controlName = '' then exit;
+  pattern := 'x:Name="' + controlName + '"';
+  if not xaml.Contains(pattern) then exit;
+  if xaml.Contains(eventName + '="' + handlerName + '"') then exit;
+  xaml := xaml.Replace(pattern, pattern + ' ' + eventName + '="' + handlerName + '"');
   fXamlEditor.Text := xaml;
 end;
 
 // =============================================================================
-// 코드 파일에 이벤트 핸들러 추가
-procedure Form1.AddEventHandlerToCode(handlerName: string);
-var
-  code   : string;
-  marker : string;
-  handler: string;
-  classPrefix: string;
-  sb     : System.Text.StringBuilder;
-begin
-  code := fCodeEditor.Text;
-  marker := '// ─── 이벤트 핸들러 ───────────────────────────';
-  classPrefix := GetClassPrefix(fXamlFileName);  // 예: TMainWindow
-
-  // 이미 핸들러가 있으면 추가하지 않음
-  if code.Contains('procedure ' + classPrefix + '.' + handlerName) then exit;
-
-  // 핸들러 코드 생성
-  sb := new System.Text.StringBuilder();
-  sb.AppendLine('procedure ' + classPrefix + '.' + handlerName +
-    '(sender: System.Object; e: System.Windows.RoutedEventArgs);');
-  sb.AppendLine('begin');
-  sb.AppendLine('  // TODO: ' + handlerName + ' 구현');
-  sb.AppendLine('end;');
-  sb.AppendLine('');
-  handler := sb.ToString();
-
-  // 선언부에 추가 (type 블록 안)
-  var typeMarker := '    constructor Create;';
-  if code.Contains(typeMarker) then
-  begin
-    var decl := '    procedure ' + handlerName +
-      '(sender: System.Object; e: System.Windows.RoutedEventArgs);';
-    code := code.Replace(typeMarker,
-      typeMarker + System.Environment.NewLine + decl);
-  end;
-
-  // 구현부 마커 뒤에 핸들러 삽입
-  if code.Contains(marker) then
-    code := code.Replace(marker, marker +
-      System.Environment.NewLine + System.Environment.NewLine + handler)
-  else
-    // 마커 없으면 begin 앞에 삽입
-    code := code.Replace(#13#10 + 'begin' + #13#10,
-      #13#10 + handler + 'begin' + #13#10);
-
-  fCodeEditor.Text := code;
-end;
-
+// PreprocessXaml
 // =============================================================================
-// pabcnetc.exe 경로 탐색
-function Form1.FindPabcCompiler: string;
+function Form1.PreprocessXaml(xaml: string): string;
 var
-  candidates: array of string;
-  path      : string;
-  regPath   : string;
+  s       : string;
+  re      : System.Text.RegularExpressions.Regex;
+  doc     : System.Xml.XmlDocument;
+  root    : System.Xml.XmlElement;
+  inner   : string;
+  w, h    : string;
+  sizeStr : string;
 begin
-  Result := '';
+  s := xaml;
 
-  // 1) 레지스트리에서 설치 경로 확인
-  try
-    regPath := System.Convert.ToString(
-      Microsoft.Win32.Registry.GetValue(
-        'HKEY_LOCAL_MACHINE\SOFTWARE\PascalABC.NET',
-        'InstallDir', ''));
-    if (regPath <> '') and
-       System.IO.File.Exists(regPath + '\pabcnetc.exe') then
-    begin
-      Result := regPath + '\pabcnetc.exe';
-      exit;
-    end;
-  except
-  end;
+  s := StripEventAttributesForRuntime(s);
 
-  // 2) 일반적인 설치 경로들 확인
-  candidates := [
-    'C:\Program Files\PascalABC.NET\pabcnetc.exe',
-    'C:\Program Files (x86)\PascalABC.NET\pabcnetc.exe',
-    System.Environment.GetFolderPath(
-      System.Environment.SpecialFolder.LocalApplicationData) +
-      '\PascalABC.NET\pabcnetc.exe',
-    System.AppDomain.CurrentDomain.BaseDirectory + 'pabcnetc.exe'
-  ];
+  re := new System.Text.RegularExpressions.Regex('\s+x:Class\s*=\s*"[^"]*"');
+  s  := re.Replace(s, '');
 
-  foreach path in candidates do
+  re := new System.Text.RegularExpressions.Regex('\s+mc:Ignorable\s*=\s*"[^"]*"');
+  s  := re.Replace(s, '');
+  re := new System.Text.RegularExpressions.Regex('\s+xmlns:mc\s*=\s*"[^"]*"');
+  s  := re.Replace(s, '');
+  re := new System.Text.RegularExpressions.Regex('\s+xmlns:d\s*=\s*"[^"]*"');
+  s  := re.Replace(s, '');
+  re := new System.Text.RegularExpressions.Regex('\s+d:\w+\s*=\s*"[^"]*"');
+  s  := re.Replace(s, '');
+
+  var trimmed := s.TrimStart();
+  if trimmed.StartsWith('<Window') or trimmed.StartsWith('<UserControl') then
   begin
-    if System.IO.File.Exists(path) then
-    begin
-      Result := path;
-      exit;
-    end;
-  end;
-
-  // 3) PATH 환경변수에서 찾기 (where 명령 사용)
-  try
-    var psi := new System.Diagnostics.ProcessStartInfo();
-    psi.FileName               := 'where';
-    psi.Arguments              := 'pabcnetc.exe';
-    psi.UseShellExecute        := false;
-    psi.RedirectStandardOutput := true;
-    psi.CreateNoWindow         := true;
-    var proc := System.Diagnostics.Process.Start(psi);
-    var output := proc.StandardOutput.ReadToEnd().Trim();
-    proc.WaitForExit();
-    if (output <> '') and System.IO.File.Exists(output.Split([#13, #10])[0]) then
-      Result := output.Split([#13, #10])[0];
-  except
-  end;
-end;
-
-// =============================================================================
-// KillPreviousBuildProcesses
-//   빌드 결과 exe가 아직 실행 중이면 다음 빌드 시
-//   "다른 프로세스에서 사용 중" IOException이 발생한다.
-//   1) 우리가 직접 Process.Start로 띄운 프로세스(fRunningProcess)를 종료
-//   2) 혹시 다른 경로로 실행된(탐색기 더블클릭 등) 동일 이름 프로세스도
-//      이름 기반으로 찾아서 정리 (안전망)
-//   3) Kill 후 OS가 파일 핸들을 완전히 풀 때까지 약간 대기
-// =============================================================================
-procedure Form1.KillPreviousBuildProcesses;
-var
-  exeNameOnly: string;
-  procs      : array of System.Diagnostics.Process;
-  idx        : integer;
-begin
-  // 1) 우리가 추적 중인 프로세스
-  if fRunningProcess <> nil then
-  begin
+    s := StripCustomNamespaces(s);
     try
-      if not fRunningProcess.HasExited then
-        fRunningProcess.Kill();
+      doc := new System.Xml.XmlDocument();
+      doc.LoadXml(s);
+      root  := doc.DocumentElement;
+      inner := root.InnerXml;
+      w     := root.GetAttribute('Width');
+      h     := root.GetAttribute('Height');
+      if w = '' then w := root.GetAttribute('d:DesignWidth');
+      if h = '' then h := root.GetAttribute('d:DesignHeight');
+      if w = '' then w := '800';
+      if h = '' then h := '450';
+      sizeStr := ' Width="' + w + '" Height="' + h + '"';
     except
+      inner   := '';
+      sizeStr := ' Width="800" Height="450"';
     end;
-    fRunningProcess := nil;
-  end;
 
-  // 2) 이름 기반 안전망 (탐색기에서 직접 실행했거나, IDE 재시작 등으로
-  //    fRunningProcess 추적이 끊긴 경우 대비)
-  try
-    exeNameOnly := System.IO.Path.GetFileNameWithoutExtension(fPasFileName);
-    procs := System.Diagnostics.Process.GetProcessesByName(exeNameOnly);
-    for idx := 0 to procs.Length - 1 do
-    begin
-      try
-        if not procs[idx].HasExited then
-        begin
-          procs[idx].Kill();
-          procs[idx].WaitForExit(2000);
-        end;
-      except
-      end;
-    end;
-  except
-  end;
-
-  // 3) Kill 직후 OS 레벨에서 파일 핸들이 풀리기까지 짧게 대기
-  System.Threading.Thread.Sleep(200);
-end;
-
-// =============================================================================
-// OnBuild
-//   1) 이전 실행 인스턴스 종료 (exe 파일 잠금 해제)
-//   2) XAML 을 Window 루트로 래핑해서 저장 (WrapXamlAsWindow)
-//   3) PAS 코드 저장
-//   4) pabcnetc.exe 탐색
-//   5) bat 경유 빌드 (UseShellExecute=true 로 콘솔 핸들 확보)
-//   6) exe 존재 여부로 성공/실패 판단
-// =============================================================================
-procedure Form1.OnBuild(sender: System.Object; e: System.EventArgs);
-var
-  xamlPath: string;
-  pasPath : string;
-  tempBat     : string;
-  compilerPath: string;
-  exitCode    : integer;
-  hadError    : boolean;
-  errMsg      : string;
-  exePath     : string;
-  windowXaml  : string;
-begin
-  hadError := false;
-  errMsg   := '';
-  exitCode := -1;
-
-  // 0) 이전에 실행된 동일 exe가 떠 있으면 종료 (파일 잠금 방지)
-  KillPreviousBuildProcesses();
-
-  xamlPath := fProjectPath + fXamlFileName;
-  pasPath  := fProjectPath + fPasFileName;
-  tempBat  := fProjectPath + 'build.bat';
-
-  // 1) XAML 을 Window 루트로 래핑 후 저장
-  try
-    // 1) XAML파일 저장
-    windowXaml := WrapXamlAsWindow(fXamlEditor.Text);
-    System.IO.File.WriteAllText(xamlPath, windowXaml, System.Text.Encoding.UTF8);
-    // 2) PAS 저장
-    System.IO.File.WriteAllText(pasPath,  fCodeEditor.Text, System.Text.Encoding.UTF8);
-  except
-    on ex: System.Exception do
-    begin
-      errMsg   := ex.Message;
-      hadError := true;
-    end;
-  end;
-
-  if hadError then
-  begin
-    System.Windows.Forms.MessageBox.Show('파일 저장 오류: ' + errMsg);
-    exit;
-  end;
-
-  // 2) 컴파일러 경로 탐색
-  compilerPath := FindPabcCompiler();
-  //System.Windows.Forms.MessageBox.Show('컴파일러 위치: ' + compilerPath);
-  if compilerPath = '' then
-  begin
-    System.Windows.Forms.MessageBox.Show(
-      'pabcnetc.exe를 찾을 수 없습니다.' + #13#10 +
-      'PascalABC.NET 설치 경로를 확인하세요.',
-      '컴파일러를 찾을 수 없음',
-      System.Windows.Forms.MessageBoxButtons.OK,
-      System.Windows.Forms.MessageBoxIcon.Warning);
-    exit;
-  end;
-
-  // 3) bat 파일 생성 - 리디렉션 없이
-  //    pabcnetc.exe 는 stdout 리디렉션(>)을 하면 콘솔 핸들 오류가 발생하므로
-  //    리디렉션 없이 그냥 실행한다.
-  try
-    var batContent := new System.Text.StringBuilder();
-    batContent.AppendLine('@echo off');
-    // > 리디렉션 완전 제거, 그냥 실행만
-    batContent.AppendLine('"' + compilerPath + '" "' + pasPath + '"');
-    batContent.AppendLine('exit %ERRORLEVEL%');
-    System.IO.File.WriteAllText(tempBat, batContent.ToString(),
-      System.Text.Encoding.Default);
-  except
-    on ex: System.Exception do
-    begin
-      errMsg   := ex.Message;
-      hadError := true;
-    end;
-  end;
-  if hadError then
-  begin
-    System.Windows.Forms.MessageBox.Show('빌드 스크립트 생성 오류: ' + errMsg);
-    exit;
-  end;
-
-  // 4) 빌드 프로세스 실행
-  //    UseShellExecute=true 여야 pabcnetc.exe 가 정상 콘솔 핸들을 얻는다.
-  try
-    var psi := new System.Diagnostics.ProcessStartInfo();
-    psi.FileName         := 'cmd.exe';
-    psi.Arguments        := '/c "' + tempBat + '"';
-    psi.WorkingDirectory := fProjectPath;
-    psi.UseShellExecute  := true;
-    psi.CreateNoWindow   := false;
-    psi.WindowStyle      := System.Diagnostics.ProcessWindowStyle.Minimized;
-
-    var proc := new System.Diagnostics.Process();
-    proc.StartInfo := psi;
-    proc.Start();
-    proc.WaitForExit(60000);
-
-    if not proc.HasExited then
-    begin
-      try proc.Kill(); except end;
-      errMsg   := '컴파일 시간 초과 (60초)';
-      hadError := true;
-    end
-    else
-      exitCode := proc.ExitCode;
-  except
-    on ex: System.Exception do
-    begin
-      errMsg   := ex.Message;
-      hadError := true;
-    end;
-  end;
-
-  // 5) bat 파일 정리
-  try
-    if System.IO.File.Exists(tempBat) then System.IO.File.Delete(tempBat);
-  except
-  end;
-  
-
-  // 6) 결과 표시
-  if hadError then
-  begin
-    lvErrors.Items.Clear();
-    var item := new System.Windows.Forms.ListViewItem('빌드 실행 오류: ' + errMsg);
-    item.ForeColor := System.Drawing.Color.Red;
-    lvErrors.Items.Add(item);
-    System.Windows.Forms.MessageBox.Show('빌드 실행 중 오류: ' + errMsg);
-    exit;
-  end;
-
-  // exe 존재 여부로 성공/실패 최종 판단
-  exePath := fProjectPath +
-    System.IO.Path.GetFileNameWithoutExtension(fPasFileName) + '.exe';
-
-  if System.IO.File.Exists(exePath) then
-  begin
-    lvErrors.Items.Clear();
-    var item := new System.Windows.Forms.ListViewItem('빌드 성공: ' + exePath);
-    item.SubItems.Add('');
-    item.SubItems.Add('');
-    item.ForeColor := System.Drawing.Color.Green;
-    lvErrors.Items.Add(item);
-    System.Windows.Forms.MessageBox.Show('빌드 성공!' + #13#10 + exePath,
-      '빌드', System.Windows.Forms.MessageBoxButtons.OK,
-      System.Windows.Forms.MessageBoxIcon.Information);
-  end
-  else
-  begin
-    lvErrors.Items.Clear();
-    var item := new System.Windows.Forms.ListViewItem(
-      '빌드 실패 - 콘솔 창의 오류 메시지를 확인하세요. (종료코드: ' +
-      exitCode.ToString() + ')');
-    item.SubItems.Add('');
-    item.SubItems.Add('');
-    item.ForeColor := System.Drawing.Color.Red;
-    lvErrors.Items.Add(item);
-    System.Windows.Forms.MessageBox.Show(
-      '빌드 실패 - 잠깐 표시된 콘솔 창의 오류 메시지를 확인하세요.',
-      '빌드 실패', System.Windows.Forms.MessageBoxButtons.OK,
-      System.Windows.Forms.MessageBoxIcon.Error);
-  end;
-end;
-
-// =============================================================================
-// 실행: 빌드 후 EXE 실행
-procedure Form1.OnRun(sender: System.Object; e: System.EventArgs);
-var
-  exePath: string;
-begin
-  OnBuild(sender, e);  // 먼저 빌드
-
-  exePath := fProjectPath +
-    System.IO.Path.GetFileNameWithoutExtension(fPasFileName) + '.exe';
-
-  if System.IO.File.Exists(exePath) then
-  begin
-    try
-      // 실행한 프로세스를 추적해야 다음 빌드 시 종료시킬 수 있다.
-      fRunningProcess := System.Diagnostics.Process.Start(exePath);
-    except
-      on ex: System.Exception do
-        System.Windows.Forms.MessageBox.Show('실행 오류: ' + ex.Message);
-    end;
-  end
-  else
-    System.Windows.Forms.MessageBox.Show(
-      '빌드된 실행 파일을 찾을 수 없습니다: ' + exePath,
-      '실행 오류', System.Windows.Forms.MessageBoxButtons.OK,
-      System.Windows.Forms.MessageBoxIcon.Error);
-end;
-
-// =============================================================================
-// 오류목록 선택 항목을 클립보드로 복사 (탭 구분, 한글 정상)
-procedure Form1.OnErrorsCopy(sender: System.Object; e: System.EventArgs);
-var
-  sb  : System.Text.StringBuilder;
-  item: System.Windows.Forms.ListViewItem;
-begin
-  if lvErrors.SelectedItems.Count = 0 then exit;
-  sb := new System.Text.StringBuilder();
-  foreach item in lvErrors.SelectedItems do
-  begin
-    sb.Append(item.Text);
-    sb.Append(#9);
-    if item.SubItems.Count > 1 then sb.Append(item.SubItems[1].Text); // 줄
-    sb.Append(#9);
-    if item.SubItems.Count > 2 then sb.Append(item.SubItems[2].Text); // 파일
-    sb.AppendLine();
-  end;
-  System.Windows.Forms.Clipboard.SetText(sb.ToString());
-end;
-
-procedure Form1.OnErrorsKeyDown(sender: System.Object; e: System.Windows.Forms.KeyEventArgs);
-begin
-  if e.Control and (e.KeyCode = System.Windows.Forms.Keys.C) then
-  begin
-    OnErrorsCopy(sender, System.EventArgs.Empty);
-    e.Handled := true;
-  end
-  else if e.Control and (e.KeyCode = System.Windows.Forms.Keys.A) then
-  begin
-    var i: integer;
-    for i := 0 to lvErrors.Items.Count - 1 do
-      lvErrors.Items[i].Selected := true;
-    e.Handled := true;
-  end;
-end;
-
-// =============================================================================
-// 빌드 오류 파싱 → 오류 목록에 표시
-procedure Form1.ShowBuildErrors(output: string);
-var
-  lines: array of string;
-  line : string;
-  item : System.Windows.Forms.ListViewItem;
-  re   : System.Text.RegularExpressions.Regex;
-  m    : System.Text.RegularExpressions.Match;
-begin
-  lvErrors.Items.Clear();
-
-  if output.Trim() = '' then
-  begin
-    item := new System.Windows.Forms.ListViewItem(
-      '빌드 실패 - 콘솔 창의 오류 메시지를 확인하세요.');
-    item.SubItems.Add('');
-    item.SubItems.Add('');
-    item.ForeColor := System.Drawing.Color.Red;
-    lvErrors.Items.Add(item);
-  end
-  else
-  begin
-    // PascalABC.NET 오류 형식: FileName(Line) : Error message
-    re    := new System.Text.RegularExpressions.Regex(
-      '([^(]+)\((\d+)\)\s*:\s*(.+)');
-    lines := output.Split([#13, #10]);
-
-    foreach line in lines do
-    begin
-      if line.Trim() = '' then continue;
-      m := re.Match(line.Trim());
-      if m.Success then
-      begin
-        item := new System.Windows.Forms.ListViewItem(m.Groups[3].Value); // 메시지
-        item.SubItems.Add(m.Groups[2].Value);  // 줄번호
-        item.SubItems.Add(m.Groups[1].Value);  // 파일명
-        item.ForeColor := System.Drawing.Color.Red;
-        lvErrors.Items.Add(item);
-      end
-      else
-      begin
-        item := new System.Windows.Forms.ListViewItem(line.Trim());
-        item.SubItems.Add('');
-        item.SubItems.Add('');
-        lvErrors.Items.Add(item);
-      end;
-    end;
-  end;
-
-  System.Windows.Forms.MessageBox.Show('빌드 오류가 발생했습니다. 오류 목록을 확인하세요.',
-    '빌드 실패', System.Windows.Forms.MessageBoxButtons.OK,
-    System.Windows.Forms.MessageBoxIcon.Error);
-end;
-
-// =============================================================================
-// 새 프로젝트
-procedure Form1.OnNewProject(sender: System.Object; e: System.EventArgs);
-var
-  dlg: System.Windows.Forms.FolderBrowserDialog;
-begin
-  dlg             := new System.Windows.Forms.FolderBrowserDialog();
-  dlg.Description := '프로젝트 폴더를 선택하세요';
-  if dlg.ShowDialog() = System.Windows.Forms.DialogResult.OK then
-  begin
-    // 새 프로젝트로 전환하기 전, 이전 프로젝트의 실행 인스턴스 정리
-    KillPreviousBuildProcesses();
-
-    fProjectPath := dlg.SelectedPath + '\';
-    LoadXaml(
+    Result :=
       '<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"' +
       '      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"' +
-      '      Background="White" Width="600" Height="400">' +
-      '</Grid>'
-    );
-    fCodeEditor.Text := GeneratePasCode(fXamlFileName);
-    Self.Text := 'PascalABC WPF XAML Designer - ' + fProjectPath;
+      sizeStr + '>' +
+      inner + '</Grid>';
+    exit;
   end;
+
+  Result := StripCustomNamespaces(s);
 end;
 
+// =============================================================================
+// StripCustomNamespaces
+// =============================================================================
+function Form1.StripCustomNamespaces(xaml: string): string;
+var
+  prefixes: System.Collections.Generic.List<string>;
+  m       : System.Text.RegularExpressions.Match;
+  re      : System.Text.RegularExpressions.Regex;
+  prefix  : string;
+  s       : string;
+begin
+  s        := xaml;
+  prefixes := new System.Collections.Generic.List<string>();
+  re       := new System.Text.RegularExpressions.Regex('xmlns:(\w+)="clr-namespace:[^"]*"');
+  m := re.Match(s);
+  while m.Success do
+  begin
+    prefixes.Add(m.Groups[1].Value);
+    m := m.NextMatch();
+  end;
+  foreach prefix in prefixes do
+  begin
+    s := System.Text.RegularExpressions.Regex.Replace(s, '<' + prefix + ':[^>]*/>', '');
+    s := System.Text.RegularExpressions.Regex.Replace(s,
+      '<' + prefix + ':[^>]*>[\s\S]*?</' + prefix + ':[^>]*>', '');
+    s := System.Text.RegularExpressions.Regex.Replace(s,
+      '\s+\w[\w.]*="\{[^"]*' + prefix + ':[^"]*\}"', '');
+    s := System.Text.RegularExpressions.Regex.Replace(s,
+      '\s+xmlns:' + prefix + '="clr-namespace:[^"]*"', '');
+  end;
+  Result := s;
+end;
+
+// =============================================================================
+// SaveDesignerToString
 // =============================================================================
 function Form1.SaveDesignerToString: string;
 var
@@ -898,19 +1474,11 @@ var
   xwSettings: System.Xml.XmlWriterSettings;
   xw        : System.Xml.XmlWriter;
 begin
-  if fSurface.DesignContext = nil then
-  begin
-    Result := '';
-    exit;
-  end;
-  sw                          := new System.IO.StringWriter();
-  xwSettings                  := new System.Xml.XmlWriterSettings();
-  xwSettings.Indent           := true;
-  xwSettings.IndentChars      := '  ';
-  // StringWriter는 내부적으로 UTF-16으로 인식되어 XmlWriter가
-  // '<?xml version="1.0" encoding="utf-16"?>' 선언을 자동으로 붙인다.
-  // 이 선언이 빌드 시 <Window> 태그 안쪽에 끼면 XML이 invalid가 되어
-  // 런타임에서 조용히 실패하므로, 애초에 선언을 생성하지 않도록 한다.
+  if fSurface.DesignContext = nil then begin Result := ''; exit; end;
+  sw                            := new System.IO.StringWriter();
+  xwSettings                    := new System.Xml.XmlWriterSettings();
+  xwSettings.Indent             := true;
+  xwSettings.IndentChars        := '  ';
   xwSettings.OmitXmlDeclaration := true;
   xw := System.Xml.XmlWriter.Create(sw, xwSettings);
   fSurface.SaveDesigner(xw);
@@ -919,30 +1487,198 @@ begin
 end;
 
 // =============================================================================
-// 하단 XAML 에디터를 디자이너 현재 상태로 동기화
+// SyncXamlEditor
+// =============================================================================
 procedure Form1.SyncXamlEditor;
 var
-  s: string;
+  designerXml : string;
+  currentXaml : string;
+  innerXml    : string;
+  doc         : System.Xml.XmlDocument;
+  newXaml     : string;
 begin
   if fLoadingXaml then exit;
-  s := SaveDesignerToString();
-  if s <> '' then
+  designerXml := SaveDesignerToString();
+  if designerXml = '' then exit;
+
+  currentXaml := fXamlEditor.Text;
+  var trimCurrent := currentXaml.TrimStart();
+
+  if trimCurrent.StartsWith('<Window') or trimCurrent.StartsWith('<UserControl') then
   begin
-    fOriginalXaml    := s;
-    fXamlEditor.Text := s;
-    if (fFoldingManager <> nil) and menuItemFolding.Checked then
-      UpdateFolding();
+    try
+      doc := new System.Xml.XmlDocument();
+      doc.LoadXml(designerXml);
+      innerXml := doc.DocumentElement.InnerXml;
+    except
+      fXamlEditor.Text := currentXaml;
+      exit;
+    end;
+
+    try
+      var fullDoc := new System.Xml.XmlDocument();
+      fullDoc.LoadXml(currentXaml);
+      var fullRoot := fullDoc.DocumentElement;
+
+      var toRemove := new System.Collections.Generic.List<System.Xml.XmlNode>();
+      var child : System.Xml.XmlNode;
+      foreach child in fullRoot.ChildNodes do
+        if not child.LocalName.Contains('.') then
+          toRemove.Add(child);
+      var n: System.Xml.XmlNode;
+      foreach n in toRemove do
+        fullRoot.RemoveChild(n);
+
+      if innerXml.Trim() <> '' then
+      begin
+        var tempDoc := new System.Xml.XmlDocument();
+        tempDoc.LoadXml('<r xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"' +
+          ' xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">' +
+          innerXml + '</r>');
+        var imp: System.Xml.XmlNode;
+        foreach imp in tempDoc.DocumentElement.ChildNodes do
+          fullRoot.AppendChild(fullDoc.ImportNode(imp, true));
+      end;
+
+      var sw2      := new System.IO.StringWriter();
+      var xws2     := new System.Xml.XmlWriterSettings();
+      xws2.Indent  := true;
+      xws2.IndentChars        := '    ';
+      xws2.OmitXmlDeclaration := true;
+      var xw2 := System.Xml.XmlWriter.Create(sw2, xws2);
+      fullDoc.WriteTo(xw2);
+      xw2.Flush();
+      newXaml := sw2.ToString();
+
+      fOriginalXaml    := newXaml;
+      fXamlEditor.Text := newXaml;
+    except
+      fXamlEditor.Text := designerXml;
+    end;
+  end
+  else
+  begin
+    fOriginalXaml    := designerXml;
+    fXamlEditor.Text := designerXml;
+  end;
+
+  if (fFoldingManager <> nil) and menuItemFolding.Checked then
+    UpdateFolding();
+end;
+
+// =============================================================================
+// LoadDesigner
+// =============================================================================
+procedure Form1.LoadDesigner(designXaml: string);
+var
+  strReader: System.IO.StringReader;
+  xmlReader: System.Xml.XmlReader;
+  settings : ICSharpCode.WpfDesign.Designer.Xaml.XamlLoadSettings;
+  scroll   : System.Windows.Controls.ScrollViewer;
+begin
+  if fFoldingManager <> nil then
+  begin
+    ICSharpCode.AvalonEdit.Folding.FoldingManager.Uninstall(fFoldingManager);
+    fFoldingManager  := nil;
+    fFoldingStrategy := nil;
+  end;
+  fSurface  := new ICSharpCode.WpfDesign.Designer.DesignSurface();
+  settings  := new ICSharpCode.WpfDesign.Designer.Xaml.XamlLoadSettings();
+  strReader := new System.IO.StringReader(designXaml);
+  xmlReader := new System.Xml.XmlTextReader(strReader);
+  fSurface.LoadDesigner(xmlReader, settings);
+  scroll := new System.Windows.Controls.ScrollViewer();
+  scroll.HorizontalScrollBarVisibility := System.Windows.Controls.ScrollBarVisibility.Auto;
+  scroll.VerticalScrollBarVisibility   := System.Windows.Controls.ScrollBarVisibility.Auto;
+  scroll.Content   := fSurface;
+  hostDesign.Child := scroll;
+  ConnectEvents();
+  if (menuItemFolding <> nil) and menuItemFolding.Checked then
+    EnableFolding();
+end;
+
+// =============================================================================
+// LoadXaml
+// =============================================================================
+procedure Form1.LoadXaml(xaml: string);
+var
+  designXaml: string;
+begin
+  fOriginalXaml    := xaml;
+  fXamlEditor.Text := xaml;
+  try
+    designXaml := PreprocessXaml(xaml);
+  except
+    on ex: System.Exception do
+    begin
+      System.Windows.Forms.MessageBox.Show('XAML 전처리 오류: ' + ex.Message);
+      exit;
+    end;
+  end;
+  fLoadingXaml := true;
+  try
+    try
+      LoadDesigner(designXaml);
+    except
+      on ex: System.Exception do
+        System.Windows.Forms.MessageBox.Show('XAML 로드 오류: ' + ex.Message);
+    end;
+  finally
+    fLoadingXaml := false;
   end;
 end;
 
 // =============================================================================
+// ConnectEvents
+// =============================================================================
+procedure Form1.ConnectEvents;
+var
+  undoSvc: ICSharpCode.WpfDesign.Designer.Services.UndoService;
+begin
+  if fSurface.DesignContext = nil then exit;
+  fSurface.DesignContext.Services.Selection.SelectionChanged += OnSelectionChanged;
+  undoSvc := fSurface.DesignContext.Services.GetService(
+    typeof(ICSharpCode.WpfDesign.Designer.Services.UndoService)
+  ) as ICSharpCode.WpfDesign.Designer.Services.UndoService;
+  if undoSvc <> nil then
+    undoSvc.UndoStackChanged += OnUndoStackChanged;
+  fSurface.MouseDoubleClick += OnDesignerDoubleClick;
+end;
+
+procedure Form1.OnSelectionChanged(sender: System.Object;
+  e: ICSharpCode.WpfDesign.DesignItemCollectionEventArgs);
+begin
+  if fSurface.DesignContext = nil then exit;
+  fPropView.SelectedItems := fSurface.DesignContext.Services.Selection.SelectedItems;
+end;
+
+procedure Form1.OnUndoStackChanged(sender: System.Object; e: System.EventArgs);
+begin
+  SyncXamlEditor();
+end;
+
+procedure Form1.OnApplyXaml(sender: System.Object; e: System.Windows.RoutedEventArgs);
+begin
+  var xaml := fXamlEditor.Text.Trim();
+  if xaml <> '' then LoadXaml(xaml);
+end;
+
+procedure Form1.OnApplyXamlMenu(sender: System.Object; e: System.EventArgs);
+begin
+  var xaml := fXamlEditor.Text.Trim();
+  if xaml <> '' then LoadXaml(xaml);
+end;
+
+procedure Form1.OnSyncXamlMenu(sender: System.Object; e: System.EventArgs);
+begin
+  SyncXamlEditor();
+end;
+
 procedure Form1.UpdateFolding;
 begin
   if (fFoldingManager = nil) or (fFoldingStrategy = nil) then exit;
-  try
-    fFoldingStrategy.UpdateFoldings(fFoldingManager, fXamlEditor.Document);
-  except
-  end;
+  try fFoldingStrategy.UpdateFoldings(fFoldingManager, fXamlEditor.Document);
+  except end;
 end;
 
 procedure Form1.OnFoldingTimerTick(sender: System.Object; e: System.EventArgs);
@@ -955,8 +1691,7 @@ procedure Form1.EnableFolding;
 begin
   if fFoldingManager = nil then
   begin
-    fFoldingManager  := ICSharpCode.AvalonEdit.Folding.FoldingManager.Install(
-                          fXamlEditor.TextArea);
+    fFoldingManager  := ICSharpCode.AvalonEdit.Folding.FoldingManager.Install(fXamlEditor.TextArea);
     fFoldingStrategy := new ICSharpCode.AvalonEdit.Folding.XmlFoldingStrategy();
   end;
   UpdateFolding();
@@ -983,135 +1718,199 @@ begin
   end;
 end;
 
-// =============================================================================
-function Form1.StripCustomNamespaces(xaml: string): string;
-var
-  prefixes: System.Collections.Generic.List<string>;
-  m       : System.Text.RegularExpressions.Match;
-  re      : System.Text.RegularExpressions.Regex;
-  prefix  : string;
-  s       : string;
+procedure Form1.OnToggleLineNumbers(sender: System.Object; e: System.EventArgs);
 begin
-  s        := xaml;
-  prefixes := new System.Collections.Generic.List<string>();
+  fXamlEditor.ShowLineNumbers := menuItemLineNum.Checked;
+  fCodeEditor.ShowLineNumbers := menuItemLineNum.Checked;
+end;
 
-  // ① clr-namespace xmlns 선언에서 prefix 목록 수집
-  re       := new System.Text.RegularExpressions.Regex(
-    'xmlns:(\w+)="clr-namespace:[^"]*"');
-  m := re.Match(s);
-  while m.Success do
-  begin
-    prefixes.Add(m.Groups[1].Value);
-    m := m.NextMatch();
-  end;
+procedure Form1.OnToggleHighlight(sender: System.Object; e: System.EventArgs);
+begin
+  if menuItemHighlight.Checked then
+    fXamlEditor.SyntaxHighlighting :=
+      ICSharpCode.AvalonEdit.Highlighting.HighlightingManager.Instance.GetDefinition('XML')
+  else
+    fXamlEditor.SyntaxHighlighting := nil;
+end;
 
-  // ② 각 prefix에 대해 본문 사용 제거
-  foreach prefix in prefixes do
-  begin
-    // 2-a) 자기완결 엘리먼트 제거: <prefix:Foo ... />
-    s := System.Text.RegularExpressions.Regex.Replace(s,
-      '<' + prefix + ':[^>]*/>', '');
+procedure Form1.OnToggleWordWrap(sender: System.Object; e: System.EventArgs);
+begin
+  fXamlEditor.WordWrap := menuItemWordWrap.Checked;
+  fCodeEditor.WordWrap := menuItemWordWrap.Checked;
+end;
 
-    // 2-b) 시작+끝 태그 쌍 제거: <prefix:Foo ...>...</prefix:Foo>
-    s := System.Text.RegularExpressions.Regex.Replace(s,
-      '<' + prefix + ':[^>]*>[\s\S]*?</' + prefix + ':[^>]*>', '');
-
-    // 2-c) 속성값에 사용된 커스텀 타입 참조 제거
-    //      예) Converter={StaticResource FileSizeConverter}  → 속성 전체 제거
-    //          {x:Type prefix:Foo}  → 빈 문자열
-    s := System.Text.RegularExpressions.Regex.Replace(s,
-      '\s+\w[\w.]*="\{[^"]*' + prefix + ':[^"]*\}"', '');
-
-    // 2-d) xmlns 선언 제거
-    s := System.Text.RegularExpressions.Regex.Replace(s,
-      '\s+xmlns:' + prefix + '="clr-namespace:[^"]*"', '');
-  end;
-  Result := s;
+procedure Form1.OnToggleFolding(sender: System.Object; e: System.EventArgs);
+begin
+  if menuItemFolding.Checked then EnableFolding() else DisableFolding();
 end;
 
 // =============================================================================
-function Form1.PreprocessXaml(xaml: string): string;
+// KillPreviousBuildProcesses
+// =============================================================================
+procedure Form1.KillPreviousBuildProcesses;
 var
-  cleanedXaml  : string;
-  doc          : System.Xml.XmlDocument;
-  root         : System.Xml.XmlElement;
-  nsMgr        : System.Xml.XmlNamespaceManager;
-  resNode      : System.Xml.XmlNode;
-  node         : System.Xml.XmlNode;
-  safeInner    : System.Text.StringBuilder;
-  resourcesXml : string;
-  inner        : string;
-  nodesToRemove: System.Collections.Generic.List<System.Xml.XmlNode>;
-  winWidth     : string;
-  winHeight    : string;
-  sizeAttrs    : string;
+  exeNameOnly: string;
+  procs      : array of System.Diagnostics.Process;
+  idx        : integer;
 begin
-  Result := xaml;
-  if not (xaml.Contains('<Window ') or xaml.Contains('<UserControl ')) then
-    exit;
-
-  cleanedXaml := StripCustomNamespaces(xaml);
-  doc := new System.Xml.XmlDocument();
-  doc.LoadXml(cleanedXaml);
-  root := doc.DocumentElement;
-
-  nsMgr := new System.Xml.XmlNamespaceManager(doc.NameTable);
-  nsMgr.AddNamespace('wpf',
-    'http://schemas.microsoft.com/winfx/2006/xaml/presentation');
-
-  resNode := root.SelectSingleNode('wpf:Window.Resources', nsMgr);
-  if resNode = nil then
-    resNode := root.SelectSingleNode('wpf:UserControl.Resources', nsMgr);
-  resourcesXml := '';
-  if resNode <> nil then
+  if fRunningProcess <> nil then
   begin
-    safeInner := new System.Text.StringBuilder();
-    foreach node in resNode.ChildNodes do
+    try if not fRunningProcess.HasExited then fRunningProcess.Kill(); except end;
+    fRunningProcess := nil;
+  end;
+  try
+    exeNameOnly := System.IO.Path.GetFileNameWithoutExtension(fPasFileName);
+    procs := System.Diagnostics.Process.GetProcessesByName(exeNameOnly);
+    for idx := 0 to procs.Length - 1 do
+    try
+      if not procs[idx].HasExited then
+      begin
+        procs[idx].Kill();
+        procs[idx].WaitForExit(2000);
+      end;
+    except end;
+  except end;
+  System.Threading.Thread.Sleep(200);
+end;
+
+// =============================================================================
+// FindPabcCompiler
+// =============================================================================
+function Form1.FindPabcCompiler: string;
+var
+  candidates: array of string;
+  path      : string;
+begin
+  Result := '';
+  try
+    var regPath := System.Convert.ToString(
+      Microsoft.Win32.Registry.GetValue(
+        'HKEY_LOCAL_MACHINE\SOFTWARE\PascalABC.NET', 'InstallDir', ''));
+    if (regPath <> '') and System.IO.File.Exists(regPath + '\pabcnetc.exe') then
+    begin Result := regPath + '\pabcnetc.exe'; exit; end;
+  except end;
+  candidates := [
+    'C:\Program Files\PascalABC.NET\pabcnetc.exe',
+    'C:\Program Files (x86)\PascalABC.NET\pabcnetc.exe',
+    System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData) +
+      '\PascalABC.NET\pabcnetc.exe',
+    System.AppDomain.CurrentDomain.BaseDirectory + 'pabcnetc.exe'
+  ];
+  foreach path in candidates do
+    if System.IO.File.Exists(path) then begin Result := path; exit; end;
+  try
+    var psi := new System.Diagnostics.ProcessStartInfo();
+    psi.FileName            := 'where';
+    psi.Arguments           := 'pabcnetc.exe';
+    psi.UseShellExecute     := false;
+    psi.RedirectStandardOutput := true;
+    psi.CreateNoWindow      := true;
+    var proc   := System.Diagnostics.Process.Start(psi);
+    var output := proc.StandardOutput.ReadToEnd().Trim();
+    proc.WaitForExit();
+    if output <> '' then
     begin
-      if node.Prefix <> '' then continue;
-      safeInner.Append(node.OuterXml);
+      var first := output.Split([#13, #10])[0];
+      if System.IO.File.Exists(first) then Result := first;
     end;
-    if safeInner.Length > 0 then
-      resourcesXml := '<Grid.Resources>' + safeInner.ToString() + '</Grid.Resources>';
-  end;
-
-  nodesToRemove := new System.Collections.Generic.List<System.Xml.XmlNode>();
-  foreach node in root.ChildNodes do
-    if node.LocalName.Contains('.') then
-      nodesToRemove.Add(node);
-  foreach node in nodesToRemove do
-    root.RemoveChild(node);
-
-  inner     := root.InnerXml;
-  winWidth  := root.GetAttribute('Width');
-  winHeight := root.GetAttribute('Height');
-  sizeAttrs := '';
-  if winWidth  <> '' then sizeAttrs += ' Width="'  + winWidth  + '"';
-  if winHeight <> '' then sizeAttrs += ' Height="' + winHeight + '"';
-
-  Result :=
-    '<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"' +
-    '      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"' +
-    sizeAttrs + '>' +
-    resourcesXml + inner + '</Grid>';
+  except end;
 end;
 
+// =============================================================================
+// OnErrorsCopy
+// =============================================================================
+procedure Form1.OnErrorsCopy(sender: System.Object; e: System.EventArgs);
+var
+  sb  : System.Text.StringBuilder;
+  item: System.Windows.Forms.ListViewItem;
+begin
+  if lvErrors.SelectedItems.Count = 0 then exit;
+  sb := new System.Text.StringBuilder();
+  foreach item in lvErrors.SelectedItems do
+  begin
+    sb.Append(item.Text); sb.Append(#9);
+    if item.SubItems.Count > 1 then sb.Append(item.SubItems[1].Text);
+    sb.Append(#9);
+    if item.SubItems.Count > 2 then sb.Append(item.SubItems[2].Text);
+    sb.AppendLine();
+  end;
+  System.Windows.Forms.Clipboard.SetText(sb.ToString());
+end;
+
+// =============================================================================
+// OnErrorsKeyDown
+// =============================================================================
+procedure Form1.OnErrorsKeyDown(sender: System.Object; e: System.Windows.Forms.KeyEventArgs);
+begin
+  if e.Control and (e.KeyCode = System.Windows.Forms.Keys.C) then
+  begin OnErrorsCopy(sender, System.EventArgs.Empty); e.Handled := true; end
+  else if e.Control and (e.KeyCode = System.Windows.Forms.Keys.A) then
+  begin
+    var i: integer;
+    for i := 0 to lvErrors.Items.Count - 1 do
+      lvErrors.Items[i].Selected := true;
+    e.Handled := true;
+  end;
+end;
+
+// =============================================================================
+// ShowBuildErrors
+// =============================================================================
+procedure Form1.ShowBuildErrors(output: string);
+var
+  lines: array of string;
+  line : string;
+  item : System.Windows.Forms.ListViewItem;
+  re   : System.Text.RegularExpressions.Regex;
+  m    : System.Text.RegularExpressions.Match;
+begin
+  lvErrors.Items.Clear();
+  if output.Trim() = '' then
+  begin
+    item := new System.Windows.Forms.ListViewItem('빌드 실패 — 콘솔 창을 확인하세요.');
+    item.ForeColor := System.Drawing.Color.Red;
+    lvErrors.Items.Add(item);
+  end
+  else
+  begin
+    re    := new System.Text.RegularExpressions.Regex('([^(]+)\((\d+)\)\s*:\s*(.+)');
+    lines := output.Split([#13, #10]);
+    foreach line in lines do
+    begin
+      if line.Trim() = '' then continue;
+      m := re.Match(line.Trim());
+      if m.Success then
+      begin
+        item := new System.Windows.Forms.ListViewItem(m.Groups[3].Value);
+        item.SubItems.Add(m.Groups[2].Value);
+        item.SubItems.Add(m.Groups[1].Value);
+        item.ForeColor := System.Drawing.Color.Red;
+      end
+      else
+      begin
+        item := new System.Windows.Forms.ListViewItem(line.Trim());
+        item.SubItems.Add(''); item.SubItems.Add('');
+      end;
+      lvErrors.Items.Add(item);
+    end;
+  end;
+end;
+
+// =============================================================================
+// BuildMenu
 // =============================================================================
 procedure Form1.BuildMenu;
 var
-  fileMenu : System.Windows.Forms.ToolStripMenuItem;
-  viewMenu : System.Windows.Forms.ToolStripMenuItem;
-  buildMenu: System.Windows.Forms.ToolStripMenuItem;
-  newItem, openItem, saveItem, syncItem, applyItem: System.Windows.Forms.ToolStripMenuItem;
-  buildItem, runItem: System.Windows.Forms.ToolStripMenuItem;
-  helpMenu, aboutItem: System.Windows.Forms.ToolStripMenuItem;
+  fileMenu, viewMenu, buildMenu, helpMenu: System.Windows.Forms.ToolStripMenuItem;
+  newItem, openItem, saveItem            : System.Windows.Forms.ToolStripMenuItem;
+  applyItem, syncItem                    : System.Windows.Forms.ToolStripMenuItem;
+  buildItem, runItem, aboutItem          : System.Windows.Forms.ToolStripMenuItem;
 begin
   menuStrip := new System.Windows.Forms.MenuStrip();
 
-  // ── 파일 메뉴 ──
   fileMenu := new System.Windows.Forms.ToolStripMenuItem('파일(&F)');
-  newItem  := new System.Windows.Forms.ToolStripMenuItem('새 프로젝트(&N)');
-  openItem := new System.Windows.Forms.ToolStripMenuItem('열기(&O)');
+  newItem  := new System.Windows.Forms.ToolStripMenuItem('새 프로젝트(&N)...');
+  openItem := new System.Windows.Forms.ToolStripMenuItem('열기(&O)...');
   saveItem := new System.Windows.Forms.ToolStripMenuItem('저장(&S)');
   newItem.Click  += OnNewProject;
   openItem.Click += OnOpen;
@@ -1120,7 +1919,6 @@ begin
   fileMenu.DropDownItems.Add(openItem);
   fileMenu.DropDownItems.Add(saveItem);
 
-  // ── 보기 메뉴 ──
   viewMenu  := new System.Windows.Forms.ToolStripMenuItem('보기(&V)');
   applyItem := new System.Windows.Forms.ToolStripMenuItem('XAML 적용(&Y)');
   syncItem  := new System.Windows.Forms.ToolStripMenuItem('XAML 동기화(&X)');
@@ -1130,15 +1928,15 @@ begin
   viewMenu.DropDownItems.Add(syncItem);
   viewMenu.DropDownItems.Add(new System.Windows.Forms.ToolStripSeparator());
 
-  menuItemLineNum              := new System.Windows.Forms.ToolStripMenuItem('라인 번호 표시(&L)');
+  menuItemLineNum              := new System.Windows.Forms.ToolStripMenuItem('라인 번호(&L)');
   menuItemLineNum.CheckOnClick := true;
   menuItemLineNum.Checked      := true;
   menuItemLineNum.Click        += OnToggleLineNumbers;
   viewMenu.DropDownItems.Add(menuItemLineNum);
 
-  menuItemHighlight              := new System.Windows.Forms.ToolStripMenuItem('구문 강조 표시(&I)');
+  menuItemHighlight              := new System.Windows.Forms.ToolStripMenuItem('구문 강조(&I)');
   menuItemHighlight.CheckOnClick := true;
-  menuItemHighlight.Checked      := true;   // 기본값: 활성
+  menuItemHighlight.Checked      := true;
   menuItemHighlight.Click        += OnToggleHighlight;
   viewMenu.DropDownItems.Add(menuItemHighlight);
 
@@ -1154,7 +1952,6 @@ begin
   menuItemFolding.Click        += OnToggleFolding;
   viewMenu.DropDownItems.Add(menuItemFolding);
 
-  // ── 빌드 ──
   buildMenu := new System.Windows.Forms.ToolStripMenuItem('빌드(&B)');
   buildItem := new System.Windows.Forms.ToolStripMenuItem('빌드(&B)    F6');
   runItem   := new System.Windows.Forms.ToolStripMenuItem('실행(&R)    F5');
@@ -1163,10 +1960,9 @@ begin
   buildMenu.DropDownItems.Add(buildItem);
   buildMenu.DropDownItems.Add(runItem);
 
-  // Help 메뉴
-  helpMenu          := new System.Windows.Forms.ToolStripMenuItem('도움말(&H)');
-  aboutItem         := new System.Windows.Forms.ToolStripMenuItem('정보(&A)...');
-  aboutItem.Click  += OnAbout;
+  helpMenu        := new System.Windows.Forms.ToolStripMenuItem('도움말(&H)');
+  aboutItem       := new System.Windows.Forms.ToolStripMenuItem('정보(&A)...');
+  aboutItem.Click += OnAbout;
   helpMenu.DropDownItems.Add(aboutItem);
 
   menuStrip.Items.Add(fileMenu);
@@ -1176,13 +1972,13 @@ begin
   Self.Controls.Add(menuStrip);
   Self.MainMenuStrip := menuStrip;
 
-  // F5/F6 단축키
   Self.KeyPreview := true;
   Self.KeyDown    += FormKeyDown;
 end;
 
 // =============================================================================
-// 왼쪽 Toolbox (Expander 버전)
+// BuildToolbox
+// =============================================================================
 procedure Form1.BuildToolbox;
 var
   scroll      : System.Windows.Controls.ScrollViewer;
@@ -1192,8 +1988,7 @@ var
   panelLayout : System.Windows.Controls.StackPanel;
   panelCommon : System.Windows.Controls.StackPanel;
 
-  procedure AddBtn(panel: System.Windows.Controls.StackPanel;
-                   name: string; typeName: string);
+  procedure AddBtn(panel: System.Windows.Controls.StackPanel; name: string; typeName: string);
   var
     btn : System.Windows.Controls.Button;
     sp  : System.Windows.Controls.StackPanel;
@@ -1202,7 +1997,6 @@ var
   begin
     sp             := new System.Windows.Controls.StackPanel();
     sp.Orientation := System.Windows.Controls.Orientation.Horizontal;
-
     icon                   := new System.Windows.Controls.TextBlock();
     icon.FontFamily        := new System.Windows.Media.FontFamily('Segoe UI Symbol');
     icon.FontSize          := 13;
@@ -1215,30 +2009,37 @@ var
       'StackPanel'  : icon.Text := '☰';
       'Canvas'      : icon.Text := '▭';
       'DockPanel'   : icon.Text := '⊞';
+      'WrapPanel'   : icon.Text := '⊡';
       'Button'      : icon.Text := '⬜';
       'TextBox'     : icon.Text := '▤';
       'Label'       : icon.Text := 'A';
       'CheckBox'    : icon.Text := '☑';
       'ComboBox'    : icon.Text := '⊟';
       'ListBox'     : icon.Text := '≡';
+      'ListView'    : icon.Text := '⊟';
+      'TreeView'    : icon.Text := '⊞';
       'Image'       : icon.Text := '▨';
       'TextBlock'   : icon.Text := 'T';
       'Slider'      : icon.Text := '⊸';
       'ProgressBar' : icon.Text := '▬';
       'RadioButton' : icon.Text := '◎';
       'Border'      : icon.Text := '▢';
+      'ScrollViewer': icon.Text := '↕';
+      'TabControl'  : icon.Text := '⊞';
+      'GroupBox'    : icon.Text := '▭';
+      'Expander'    : icon.Text := '▼';
+      'DataGrid'    : icon.Text := '▦';
+      'DatePicker'  : icon.Text := '📅';
+      'PasswordBox' : icon.Text := '●';
     else
       icon.Text := '◆';
     end;
-
     lbl                   := new System.Windows.Controls.TextBlock();
     lbl.Text              := name;
     lbl.FontSize          := 12;
     lbl.VerticalAlignment := System.Windows.VerticalAlignment.Center;
-
     sp.Children.Add(icon);
     sp.Children.Add(lbl);
-
     btn                            := new System.Windows.Controls.Button();
     btn.Content                    := sp;
     btn.Tag                        := typeName;
@@ -1261,9 +2062,6 @@ var
     hdr.Text       := header;
     hdr.FontWeight := System.Windows.FontWeights.Bold;
     hdr.FontSize   := 12;
-    hdr.Foreground := new System.Windows.Media.SolidColorBrush(
-      System.Windows.Media.Color.FromRgb(30, 30, 30));
-
     exp            := new System.Windows.Controls.Expander();
     exp.Header     := hdr;
     exp.IsExpanded := true;
@@ -1286,11 +2084,12 @@ begin
 
   panelLayout        := new System.Windows.Controls.StackPanel();
   panelLayout.Margin := new System.Windows.Thickness(8, 2, 0, 2);
-  AddBtn(panelLayout, 'Grid',       'System.Windows.Controls.Grid');
-  AddBtn(panelLayout, 'StackPanel', 'System.Windows.Controls.StackPanel');
-  AddBtn(panelLayout, 'Canvas',     'System.Windows.Controls.Canvas');
-  AddBtn(panelLayout, 'DockPanel',  'System.Windows.Controls.DockPanel');
-
+  AddBtn(panelLayout, 'Grid',         'System.Windows.Controls.Grid');
+  AddBtn(panelLayout, 'StackPanel',   'System.Windows.Controls.StackPanel');
+  AddBtn(panelLayout, 'Canvas',       'System.Windows.Controls.Canvas');
+  AddBtn(panelLayout, 'DockPanel',    'System.Windows.Controls.DockPanel');
+  AddBtn(panelLayout, 'WrapPanel',    'System.Windows.Controls.WrapPanel');
+  AddBtn(panelLayout, 'ScrollViewer', 'System.Windows.Controls.ScrollViewer');
   expLayout         := MakeExpander('레이아웃');
   expLayout.Content := panelLayout;
   fToolboxPanel.Children.Add(expLayout);
@@ -1299,48 +2098,52 @@ begin
   panelCommon.Margin := new System.Windows.Thickness(8, 2, 0, 2);
   AddBtn(panelCommon, 'Button',      'System.Windows.Controls.Button');
   AddBtn(panelCommon, 'TextBox',     'System.Windows.Controls.TextBox');
+  AddBtn(panelCommon, 'TextBlock',   'System.Windows.Controls.TextBlock');
   AddBtn(panelCommon, 'Label',       'System.Windows.Controls.Label');
   AddBtn(panelCommon, 'CheckBox',    'System.Windows.Controls.CheckBox');
+  AddBtn(panelCommon, 'RadioButton', 'System.Windows.Controls.RadioButton');
   AddBtn(panelCommon, 'ComboBox',    'System.Windows.Controls.ComboBox');
   AddBtn(panelCommon, 'ListBox',     'System.Windows.Controls.ListBox');
+  AddBtn(panelCommon, 'ListView',    'System.Windows.Controls.ListView');
+  AddBtn(panelCommon, 'TreeView',    'System.Windows.Controls.TreeView');
+  AddBtn(panelCommon, 'DataGrid',    'System.Windows.Controls.DataGrid');
   AddBtn(panelCommon, 'Image',       'System.Windows.Controls.Image');
-  AddBtn(panelCommon, 'TextBlock',   'System.Windows.Controls.TextBlock');
   AddBtn(panelCommon, 'Slider',      'System.Windows.Controls.Slider');
   AddBtn(panelCommon, 'ProgressBar', 'System.Windows.Controls.ProgressBar');
-  AddBtn(panelCommon, 'RadioButton', 'System.Windows.Controls.RadioButton');
   AddBtn(panelCommon, 'Border',      'System.Windows.Controls.Border');
-
+  AddBtn(panelCommon, 'TabControl',  'System.Windows.Controls.TabControl');
+  AddBtn(panelCommon, 'GroupBox',    'System.Windows.Controls.GroupBox');
+  AddBtn(panelCommon, 'Expander',    'System.Windows.Controls.Expander');
+  AddBtn(panelCommon, 'DatePicker',  'System.Windows.Controls.DatePicker');
+  AddBtn(panelCommon, 'PasswordBox', 'System.Windows.Controls.PasswordBox');
   expCommon         := MakeExpander('공용 컨트롤');
   expCommon.Content := panelCommon;
   fToolboxPanel.Children.Add(expCommon);
 
   scroll         := new System.Windows.Controls.ScrollViewer();
   scroll.Content := fToolboxPanel;
-  scroll.VerticalScrollBarVisibility :=
-    System.Windows.Controls.ScrollBarVisibility.Auto;
-
+  scroll.VerticalScrollBarVisibility := System.Windows.Controls.ScrollBarVisibility.Auto;
   hostLeft       := new System.Windows.Forms.Integration.ElementHost();
   hostLeft.Dock  := System.Windows.Forms.DockStyle.Fill;
   hostLeft.Child := scroll;
 end;
 
 // =============================================================================
+// BuildLayout
+// =============================================================================
 procedure Form1.BuildLayout;
 var
-  mainPanel     : System.Windows.Forms.Panel;
-  toolboxPanel  : System.Windows.Forms.Panel;
-  propPanel     : System.Windows.Forms.Panel;
-  editorGrid    : System.Windows.Controls.Grid;
-  editorRow0    : System.Windows.Controls.RowDefinition;
-  editorRow1    : System.Windows.Controls.RowDefinition;
-  applyBtn      : System.Windows.Controls.Button;
-  errPanel      : System.Windows.Forms.Panel;
-  errLabel      : System.Windows.Forms.Label;
-  colMsg        : System.Windows.Forms.ColumnHeader;
-  colLine       : System.Windows.Forms.ColumnHeader;
-  colFile       : System.Windows.Forms.ColumnHeader;
+  mainPanel    : System.Windows.Forms.Panel;
+  toolboxPanel : System.Windows.Forms.Panel;
+  propPanel    : System.Windows.Forms.Panel;
+  editorGrid   : System.Windows.Controls.Grid;
+  editorRow0   : System.Windows.Controls.RowDefinition;
+  editorRow1   : System.Windows.Controls.RowDefinition;
+  applyBtn     : System.Windows.Controls.Button;
+  errPanel     : System.Windows.Forms.Panel;
+  errLabel     : System.Windows.Forms.Label;
+  colMsg, colLine, colFile: System.Windows.Forms.ColumnHeader;
 begin
-  // ── PropertyGrid (우측) ──
   fPropView       := new ICSharpCode.WpfDesign.Designer.PropertyGrid.PropertyGridView();
   hostRight       := new System.Windows.Forms.Integration.ElementHost();
   hostRight.Dock  := System.Windows.Forms.DockStyle.Fill;
@@ -1349,26 +2152,19 @@ begin
   propPanel.Dock  := System.Windows.Forms.DockStyle.Fill;
   propPanel.Controls.Add(hostRight);
 
-  // ── DesignSurface 호스트 ──
   hostDesign      := new System.Windows.Forms.Integration.ElementHost();
   hostDesign.Dock := System.Windows.Forms.DockStyle.Fill;
 
-  // ── XAML 에디터 (AvalonEdit) ──
   fXamlEditor                    := new ICSharpCode.AvalonEdit.TextEditor();
   fXamlEditor.FontFamily         := new System.Windows.Media.FontFamily('Consolas');
   fXamlEditor.FontSize           := 13;
   fXamlEditor.ShowLineNumbers    := true;
   fXamlEditor.SyntaxHighlighting :=
-    ICSharpCode.AvalonEdit.Highlighting.HighlightingManager.Instance
-      .GetDefinition('XML');
+    ICSharpCode.AvalonEdit.Highlighting.HighlightingManager.Instance.GetDefinition('XML');
   fXamlEditor.WordWrap           := false;
-  fXamlEditor.IsReadOnly         := false;
-  fXamlEditor.HorizontalScrollBarVisibility :=
-    System.Windows.Controls.ScrollBarVisibility.Auto;
-  fXamlEditor.VerticalScrollBarVisibility :=
-    System.Windows.Controls.ScrollBarVisibility.Auto;
+  fXamlEditor.HorizontalScrollBarVisibility := System.Windows.Controls.ScrollBarVisibility.Auto;
+  fXamlEditor.VerticalScrollBarVisibility   := System.Windows.Controls.ScrollBarVisibility.Auto;
 
-  // XAML 에디터 + 적용버튼 WPF Grid
   editorGrid        := new System.Windows.Controls.Grid();
   editorRow0        := new System.Windows.Controls.RowDefinition();
   editorRow0.Height := System.Windows.GridLength.Auto;
@@ -1389,73 +2185,57 @@ begin
   hostXaml.Dock  := System.Windows.Forms.DockStyle.Fill;
   hostXaml.Child := editorGrid;
 
-  // ── 코드 에디터 (AvalonEdit - Pascal 구문강조) ──
   fCodeEditor                    := new ICSharpCode.AvalonEdit.TextEditor();
   fCodeEditor.FontFamily         := new System.Windows.Media.FontFamily('Consolas');
   fCodeEditor.FontSize           := 13;
   fCodeEditor.ShowLineNumbers    := true;
   fCodeEditor.WordWrap           := false;
-  fCodeEditor.IsReadOnly         := false;
-  fCodeEditor.HorizontalScrollBarVisibility :=
-    System.Windows.Controls.ScrollBarVisibility.Auto;
-  fCodeEditor.VerticalScrollBarVisibility :=
-    System.Windows.Controls.ScrollBarVisibility.Auto;
+  fCodeEditor.HorizontalScrollBarVisibility := System.Windows.Controls.ScrollBarVisibility.Auto;
+  fCodeEditor.VerticalScrollBarVisibility   := System.Windows.Controls.ScrollBarVisibility.Auto;
   hostCode       := new System.Windows.Forms.Integration.ElementHost();
   hostCode.Dock  := System.Windows.Forms.DockStyle.Fill;
   hostCode.Child := fCodeEditor;
 
-  // ── 탭 컨트롤 (디자인 / XAML / 코드) ──
   tabControl      := new System.Windows.Forms.TabControl();
   tabControl.Dock := System.Windows.Forms.DockStyle.Fill;
   tabControl.SelectedIndexChanged += OnTabChanged;
-
-  tabDesign      := new System.Windows.Forms.TabPage('🎨 디자인');
+  tabDesign := new System.Windows.Forms.TabPage('🎨 디자인');
   tabDesign.Controls.Add(hostDesign);
-
-  tabXaml        := new System.Windows.Forms.TabPage('📄 XAML');
+  tabXaml   := new System.Windows.Forms.TabPage('📄 XAML');
   tabXaml.Controls.Add(hostXaml);
-
-  tabCode        := new System.Windows.Forms.TabPage('💻 코드');
+  tabCode   := new System.Windows.Forms.TabPage('💻 코드');
   tabCode.Controls.Add(hostCode);
-
   tabControl.TabPages.Add(tabDesign);
   tabControl.TabPages.Add(tabXaml);
   tabControl.TabPages.Add(tabCode);
 
-  // ── 오류 목록 패널 (하단) ──
   errLabel           := new System.Windows.Forms.Label();
   errLabel.Text      := '오류 목록';
   errLabel.Dock      := System.Windows.Forms.DockStyle.Top;
-  errLabel.Font      := new System.Drawing.Font('Segoe UI', 9,
-    System.Drawing.FontStyle.Bold);
+  errLabel.Font      := new System.Drawing.Font('Segoe UI', 9, System.Drawing.FontStyle.Bold);
   errLabel.BackColor := System.Drawing.Color.FromArgb(230, 230, 230);
   errLabel.Height    := 22;
 
-  lvErrors                   := new System.Windows.Forms.ListView();
-  lvErrors.Dock              := System.Windows.Forms.DockStyle.Fill;
-  lvErrors.View              := System.Windows.Forms.View.Details;
-  lvErrors.FullRowSelect     := true;
-  lvErrors.GridLines         := true;
-  lvErrors.MultiSelect       := true;
-  lvErrors.Font              := new System.Drawing.Font('Consolas', 9);
-  lvErrors.KeyDown           += OnErrorsKeyDown;
-
-  // 우클릭 복사 메뉴
+  lvErrors               := new System.Windows.Forms.ListView();
+  lvErrors.Dock          := System.Windows.Forms.DockStyle.Fill;
+  lvErrors.View          := System.Windows.Forms.View.Details;
+  lvErrors.FullRowSelect := true;
+  lvErrors.GridLines     := true;
+  lvErrors.MultiSelect   := true;
+  lvErrors.Font          := new System.Drawing.Font('Consolas', 9);
+  lvErrors.KeyDown       += OnErrorsKeyDown;
   var errMenu  := new System.Windows.Forms.ContextMenuStrip();
   var copyItem := new System.Windows.Forms.ToolStripMenuItem('복사(&C)' + #9 + 'Ctrl+C');
   copyItem.Click += OnErrorsCopy;
   errMenu.Items.Add(copyItem);
   lvErrors.ContextMenuStrip := errMenu;
 
-  colMsg       := new System.Windows.Forms.ColumnHeader();
-  colMsg.Text  := '오류 메시지';
-  colMsg.Width := 500;
+  colMsg      := new System.Windows.Forms.ColumnHeader();
+  colMsg.Text := '오류 메시지'; colMsg.Width := 500;
   colLine      := new System.Windows.Forms.ColumnHeader();
-  colLine.Text := '줄';
-  colLine.Width := 60;
+  colLine.Text := '줄'; colLine.Width := 60;
   colFile      := new System.Windows.Forms.ColumnHeader();
-  colFile.Text := '파일';
-  colFile.Width := 200;
+  colFile.Text := '파일'; colFile.Width := 200;
   lvErrors.Columns.Add(colMsg);
   lvErrors.Columns.Add(colLine);
   lvErrors.Columns.Add(colFile);
@@ -1465,7 +2245,6 @@ begin
   errPanel.Controls.Add(lvErrors);
   errPanel.Controls.Add(errLabel);
 
-  // ── 우측 분할: 탭(디자인/XAML/코드) | 속성창 ──
   splitRight                  := new System.Windows.Forms.SplitContainer();
   splitRight.Dock             := System.Windows.Forms.DockStyle.Fill;
   splitRight.Orientation      := System.Windows.Forms.Orientation.Vertical;
@@ -1473,7 +2252,6 @@ begin
   splitRight.Panel1.Controls.Add(tabControl);
   splitRight.Panel2.Controls.Add(propPanel);
 
-  // ── 좌우 분할: 툴박스 | 우측 분할 ──
   toolboxPanel      := new System.Windows.Forms.Panel();
   toolboxPanel.Dock := System.Windows.Forms.DockStyle.Fill;
   toolboxPanel.Controls.Add(hostLeft);
@@ -1481,11 +2259,10 @@ begin
   splitDesign                  := new System.Windows.Forms.SplitContainer();
   splitDesign.Dock             := System.Windows.Forms.DockStyle.Fill;
   splitDesign.Orientation      := System.Windows.Forms.Orientation.Vertical;
-  splitDesign.SplitterDistance := 5;//160;
+  splitDesign.SplitterDistance := 5;
   splitDesign.Panel1.Controls.Add(toolboxPanel);
   splitDesign.Panel2.Controls.Add(splitRight);
 
-  // ── 상하 분할: 메인 | 오류목록 ──
   splitMain                  := new System.Windows.Forms.SplitContainer();
   splitMain.Dock             := System.Windows.Forms.DockStyle.Fill;
   splitMain.Orientation      := System.Windows.Forms.Orientation.Horizontal;
@@ -1498,7 +2275,6 @@ begin
   mainPanel.Controls.Add(splitMain);
   Self.Controls.Add(mainPanel);
 
-  // 폴딩 타이머
   fFoldingTimer          := new System.Windows.Threading.DispatcherTimer();
   fFoldingTimer.Interval := System.TimeSpan.FromMilliseconds(500);
   fFoldingTimer.Tick     += OnFoldingTimerTick;
@@ -1506,261 +2282,12 @@ begin
 end;
 
 // =============================================================================
-// 탭 전환 시 처리
-procedure Form1.OnTabChanged(sender: System.Object; e: System.EventArgs);
-begin
-  // 디자인 탭으로 돌아올 때 코드 에디터의 내용을 저장해두는 처리 등 가능
-  if tabControl.SelectedTab = tabDesign then
-  begin
-    // 필요 시 디자인 뷰 갱신 처리
-  end;
-end;
-
-// =============================================================================
-procedure Form1.LoadDesigner(designXaml: string);
-var
-  strReader: System.IO.StringReader;
-  xmlReader: System.Xml.XmlReader;
-  settings : ICSharpCode.WpfDesign.Designer.Xaml.XamlLoadSettings;
-  scroll   : System.Windows.Controls.ScrollViewer;
-begin
-  if fFoldingManager <> nil then
-  begin
-    ICSharpCode.AvalonEdit.Folding.FoldingManager.Uninstall(fFoldingManager);
-    fFoldingManager  := nil;
-    fFoldingStrategy := nil;
-  end;
-
-  fSurface  := new ICSharpCode.WpfDesign.Designer.DesignSurface();
-  settings  := new ICSharpCode.WpfDesign.Designer.Xaml.XamlLoadSettings();
-  strReader := new System.IO.StringReader(designXaml);
-  xmlReader := new System.Xml.XmlTextReader(strReader);
-  fSurface.LoadDesigner(xmlReader, settings);
-
-  scroll := new System.Windows.Controls.ScrollViewer();
-  scroll.HorizontalScrollBarVisibility :=
-    System.Windows.Controls.ScrollBarVisibility.Auto;
-  scroll.VerticalScrollBarVisibility :=
-    System.Windows.Controls.ScrollBarVisibility.Auto;
-  scroll.Content   := fSurface;
-  hostDesign.Child := scroll;
-
-  ConnectEvents();
-
-  if (menuItemFolding <> nil) and menuItemFolding.Checked then
-    EnableFolding();
-end;
-
-// =============================================================================
-procedure Form1.LoadXaml(xaml: string);
-var
-  designXaml: string;
-begin
-  fOriginalXaml    := xaml;
-  fXamlEditor.Text := xaml;
-
-  try
-    designXaml := PreprocessXaml(xaml);
-  except
-    on ex: System.Exception do
-    begin
-      System.Windows.Forms.MessageBox.Show('XAML 전처리 오류: ' + ex.Message);
-      exit;
-    end;
-  end;
-
-  fLoadingXaml := true;
-  try
-    try
-      LoadDesigner(designXaml);
-    except
-      on ex: System.Exception do
-        System.Windows.Forms.MessageBox.Show('XAML 로드 오류: ' + ex.Message);
-    end;
-  finally
-    fLoadingXaml := false;
-  end;
-end;
-
-// =============================================================================
-// 이벤트 연결
-procedure Form1.ConnectEvents;
-var
-  undoSvc: ICSharpCode.WpfDesign.Designer.Services.UndoService;
-begin
-  if fSurface.DesignContext = nil then exit;
-
-  // 선택 변경 → PropertyGrid 갱신
-  fSurface.DesignContext.Services.Selection.SelectionChanged += OnSelectionChanged;
-
-  // UndoService 변경 → XAML 에디터 자동 동기화
-  // 드래그/크기변경/속성변경 등 모든 디자인 변경을 감지함
-  undoSvc := fSurface.DesignContext.Services.GetService(
-    typeof(ICSharpCode.WpfDesign.Designer.Services.UndoService)
-  ) as ICSharpCode.WpfDesign.Designer.Services.UndoService;
-
-  if undoSvc <> nil then
-    undoSvc.UndoStackChanged += OnUndoStackChanged;
-
-  // 더블클릭 → 이벤트 핸들러 자동 생성
-  fSurface.MouseDoubleClick += OnDesignerDoubleClick;
-end;
-
-// =============================================================================
-// 선택 변경 → PropertyGrid 업데이트
-procedure Form1.OnSelectionChanged(sender: System.Object;
-  e: ICSharpCode.WpfDesign.DesignItemCollectionEventArgs);
-begin
-  if fSurface.DesignContext = nil then exit;
-  fPropView.SelectedItems :=
-    fSurface.DesignContext.Services.Selection.SelectedItems;
-end;
-
-// =============================================================================
-// 디자인 변경(드래그/크기/속성) → XAML 자동 동기화
-procedure Form1.OnUndoStackChanged(sender: System.Object; e: System.EventArgs);
-begin
-  SyncXamlEditor();
-end;
-
-// =============================================================================
-// OnSave
-//   - XAML 탭 내용(Grid 루트)을 그대로 .xaml 로 저장한다.
-//   - 빌드 시에는 WrapXamlAsWindow 로 래핑하므로 여기선 원본 보존.
-// =============================================================================
-procedure Form1.OnSave(sender: System.Object; e: System.EventArgs);
-var
-  dlg: System.Windows.Forms.SaveFileDialog;
-begin
-  dlg          := new System.Windows.Forms.SaveFileDialog();
-  dlg.Filter   := 'XAML 파일|*.xaml|모든 파일|*.*';
-  dlg.FileName := fXamlFileName;
-  dlg.InitialDirectory := fProjectPath;
-  if dlg.ShowDialog() = System.Windows.Forms.DialogResult.OK then
-  begin
-    // XAML 저장
-    System.IO.File.WriteAllText(dlg.FileName, fXamlEditor.Text,
-      System.Text.Encoding.UTF8);
-    // PAS 저장 (같은 폴더, 같은 이름)
-    var pasPath := System.IO.Path.ChangeExtension(dlg.FileName, '.pas');
-    System.IO.File.WriteAllText(pasPath, fCodeEditor.Text,
-      System.Text.Encoding.UTF8);
-    fProjectPath  := System.IO.Path.GetDirectoryName(dlg.FileName) + '\';
-    fXamlFileName := System.IO.Path.GetFileName(dlg.FileName);
-    fPasFileName  := System.IO.Path.GetFileName(pasPath);
-    Self.Text     := 'PascalABC WPF XAML Designer - ' + fProjectPath;
-    System.Windows.Forms.MessageBox.Show(
-      'XAML: ' + dlg.FileName + #13#10 + 'PAS: ' + pasPath + #13#10 + '저장 완료!');
-  end;
-end;
-
-// =============================================================================
-procedure Form1.OnOpen(sender: System.Object; e: System.EventArgs);
-var
-  dlg    : System.Windows.Forms.OpenFileDialog;
-  xaml   : string;
-  pasPath: string;
-begin
-  dlg        := new System.Windows.Forms.OpenFileDialog();
-  dlg.Filter := 'XAML 파일|*.xaml|모든 파일|*.*';
-  if dlg.ShowDialog() <> System.Windows.Forms.DialogResult.OK then exit;
-
-  try
-    xaml := System.IO.File.ReadAllText(dlg.FileName);
-  except
-    on ex: System.Exception do
-    begin
-      System.Windows.Forms.MessageBox.Show('파일 읽기 오류: ' + ex.Message);
-      exit;
-    end;
-  end;
-
-  // 다른 프로젝트를 여는 경우, 이전 프로젝트의 실행 인스턴스를 정리
-  KillPreviousBuildProcesses();
-
-  fProjectPath  := System.IO.Path.GetDirectoryName(dlg.FileName) + '\';
-  fXamlFileName := System.IO.Path.GetFileName(dlg.FileName);
-  fPasFileName  := System.IO.Path.ChangeExtension(fXamlFileName, '.pas');
-  Self.Text     := 'PascalABC WPF XAML Designer - ' + fProjectPath;
-
-  LoadXaml(xaml);
-
-  // 같은 폴더에 .pas 파일이 있으면 코드 에디터에 로드
-  pasPath := fProjectPath + fPasFileName;
-  if System.IO.File.Exists(pasPath) then
-    fCodeEditor.Text := System.IO.File.ReadAllText(pasPath)
-  else
-    fCodeEditor.Text := GeneratePasCode(fXamlFileName);
-end;
-
-// =============================================================================
-// 하단 XAML → 디자이너 적용
-// XAML 에디터에서 붙여넣기 후 적용
-// Window/UserControl 루트도 자동 전처리하여 디자이너에 반영
-procedure Form1.OnApplyXaml(sender: System.Object; e: System.Windows.RoutedEventArgs);
-var
-  xaml: string;
-begin
-  xaml := fXamlEditor.Text.Trim();
-  if xaml = '' then exit;
-  LoadXaml(xaml);
-end;
-
-procedure Form1.OnApplyXamlMenu(sender: System.Object; e: System.EventArgs);
-var
-  xaml: string;
-begin
-  xaml := fXamlEditor.Text.Trim();
-  if xaml = '' then exit;
-  LoadXaml(xaml);
-end;
-
-// =============================================================================
-// 메뉴: 수동 동기화
-procedure Form1.OnSyncXamlMenu(sender: System.Object; e: System.EventArgs);
-begin
-  SyncXamlEditor();
-end;
-
-// =============================================================================
-procedure Form1.OnToggleLineNumbers(sender: System.Object; e: System.EventArgs);
-begin
-  fXamlEditor.ShowLineNumbers := menuItemLineNum.Checked;
-  fCodeEditor.ShowLineNumbers := menuItemLineNum.Checked;
-end;
-
-// =============================================================================
-// 구문 강조 ON/OFF 토글
-procedure Form1.OnToggleHighlight(sender: System.Object; e: System.EventArgs);
-begin
-  if menuItemHighlight.Checked then
-    fXamlEditor.SyntaxHighlighting :=
-      ICSharpCode.AvalonEdit.Highlighting.HighlightingManager.Instance
-        .GetDefinition('XML')
-  else
-    fXamlEditor.SyntaxHighlighting := nil;
-end;
-
-procedure Form1.OnToggleWordWrap(sender: System.Object; e: System.EventArgs);
-begin
-  fXamlEditor.WordWrap := menuItemWordWrap.Checked;
-  fCodeEditor.WordWrap := menuItemWordWrap.Checked;
-end;
-
-procedure Form1.OnToggleFolding(sender: System.Object; e: System.EventArgs);
-begin
-  if menuItemFolding.Checked then
-    EnableFolding()
-  else
-    DisableFolding();
-end;
-
+// OnToolboxClick
 // =============================================================================
 procedure Form1.OnToolboxClick(sender: System.Object; e: System.Windows.RoutedEventArgs);
 var
   tname    : string;
   t        : System.Type;
-  inst     : System.Object;
   newItem  : ICSharpCode.WpfDesign.DesignItem;
   rootItem : ICSharpCode.WpfDesign.DesignItem;
   childProp: ICSharpCode.WpfDesign.DesignItemProperty;
@@ -1777,11 +2304,11 @@ begin
   end;
   if t = nil then
   begin
-    System.Windows.Forms.MessageBox.Show('타입을 찾을 수 없습니다: ' + tname);
+    System.Windows.Forms.MessageBox.Show('타입 없음: ' + tname);
     exit;
   end;
   try
-    inst := System.Activator.CreateInstance(t);
+    var inst     := System.Activator.CreateInstance(t);
     if inst = nil then exit;
     var services := fSurface.DesignContext.Services;
     rootItem     := fSurface.DesignContext.RootItem;
@@ -1806,7 +2333,6 @@ begin
   end;
 end;
 
-// =============================================================================
 procedure Form1.FormKeyDown(sender: System.Object; ke: System.Windows.Forms.KeyEventArgs);
 begin
   if ke.KeyCode = System.Windows.Forms.Keys.F5 then
@@ -1815,42 +2341,41 @@ begin
     OnBuild(sender, System.EventArgs.Empty);
 end;
 
-// =============================================================================
-// FormClosing
-//   디자이너 창을 닫을 때 실행 중인 자식 프로세스(테스트 실행한 WPF 앱)를
-//   같이 정리해서, 다음 번 디자이너 실행 시 같은 임시 폴더를 사용해도
-//   exe 파일 잠금 문제가 남지 않도록 한다.
-// =============================================================================
-procedure Form1.OnFormClosing(sender: System.Object; e: System.Windows.Forms.FormClosingEventArgs);
+procedure Form1.OnFormClosing(sender: System.Object;
+  e: System.Windows.Forms.FormClosingEventArgs);
 begin
   KillPreviousBuildProcesses();
 end;
 
-// Help > About
+// =============================================================================
+// OnAbout
+// =============================================================================
 procedure Form1.OnAbout(sender: System.Object; e: System.EventArgs);
 begin
   System.Windows.Forms.MessageBox.Show(
-    'PascalABC-WPF-Xaml-Designer' + System.Environment.NewLine +
-    'Ver 1.3.0' + System.Environment.NewLine + System.Environment.NewLine +
-    'ICSharpCode.WpfDesign.Designer' + System.Environment.NewLine +
-    'ICSharpCode.WpfDesign' + System.Environment.NewLine +
-    'ICSharpCode.WpfDesign.XamlDom' + System.Environment.NewLine +
-    'ICSharpCode.AvalonEdit' + System.Environment.NewLine +
-    'avalonedit.6.3.1.120' + System.Environment.NewLine +
-    ' 기반 WPF XAML 디자이너' + System.Environment.NewLine + System.Environment.NewLine +
-    'Built with PascalABC.NET 3.11.1.3833' + System.Environment.NewLine + System.Environment.NewLine +
-    'made by sigmak (dwfree74@gmail.com)',
-    '프로그램 정보',
+    'PascalABC-WPF-Designer Ver 2.0.0' + System.Environment.NewLine + System.Environment.NewLine +
+    '■ VS 호환 XAML 지원' + System.Environment.NewLine +
+    '  · x:Class, x:Name, 이벤트 속성 100% 호환' + System.Environment.NewLine +
+    '  · mc:Ignorable, d:DesignHeight/Width 지원' + System.Environment.NewLine + System.Environment.NewLine +
+    '■ 프로젝트 템플릿' + System.Environment.NewLine +
+    '  · WPF 애플리케이션 (Window 루트)' + System.Environment.NewLine +
+    '  · WPF 사용자 정의 컨트롤 라이브러리 (UserControl 루트)' + System.Environment.NewLine + System.Environment.NewLine +
+    '■ 자동 코드 생성' + System.Environment.NewLine +
+    '  · InitializeComponent() 자동 생성' + System.Environment.NewLine +
+    '  · FindName() 컨트롤 바인딩' + System.Environment.NewLine +
+    '  · 이벤트 핸들러 시그니처 자동 생성' + System.Environment.NewLine + System.Environment.NewLine +
+    'Built with PascalABC.NET 3.11.1.3833' + System.Environment.NewLine +
+    'ICSharpCode.WpfDesign + AvalonEdit' + System.Environment.NewLine + System.Environment.NewLine +
+    'made by sigmak (dwfree74@gmail.com) with claude.ai ',
+    '정보',
     System.Windows.Forms.MessageBoxButtons.OK,
-    System.Windows.Forms.MessageBoxIcon.Information
-  );
+    System.Windows.Forms.MessageBoxIcon.Information);
 end;
 
 // =============================================================================
 begin
   System.Threading.Thread.CurrentThread.SetApartmentState(
-    System.Threading.ApartmentState.STA
-  );
+    System.Threading.ApartmentState.STA);
   System.Windows.Forms.Application.EnableVisualStyles();
   System.Windows.Forms.Application.Run(new Form1());
 end.

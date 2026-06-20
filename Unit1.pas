@@ -223,6 +223,7 @@ type
     procedure OnBuildProcessExited(sender: System.Object; e: System.EventArgs);
     procedure FinishBuild;
     procedure LaunchBuiltExe;
+    procedure LaunchControlTestHost;
 
     // ── 실행 프로세스 종료 알림용 named 핸들러 ───────────
     procedure OnRunProcessExited(sender: System.Object; e: System.EventArgs);
@@ -282,7 +283,7 @@ type
 constructor Form1.Create;
 begin
   inherited Create;
-  Self.Text   := 'PascalABC-WPF-Designer Ver 2.1.0';
+  Self.Text   := 'PascalABC-WPF-Designer Ver 2.1.1';
   Self.Width  := 1600;
   Self.Height := 950;
 
@@ -573,6 +574,18 @@ var
 begin
   var xaml := fXamlEditor.Text;
   ParseXClassInfo(xaml, fNamespace, fClassName);
+  // program 이름과 class 이름이 같으면 식별자 충돌 → 클래스명에 'Window' 접미사
+  if fClassName = fNamespace then
+  begin
+    var newClassName := fClassName + 'Window';
+    // XAML 에디터의 x:Class 속성도 함께 갱신
+    var oldXClass := fNamespace + '.' + fClassName;
+    var newXClass := fNamespace + '.' + newClassName;
+    xaml := xaml.Replace('x:Class="' + oldXClass + '"', 'x:Class="' + newXClass + '"');
+    fXamlEditor.Text := xaml;
+    fClassName := newClassName;
+  end;
+
   controls := ParseControlsFromXaml(xaml);
 
   programName := fNamespace;
@@ -704,12 +717,30 @@ var
 begin
   var xaml := fXamlEditor.Text;
   ParseXClassInfo(xaml, fNamespace, fClassName);
+  // unit 이름(=파일명, 보통 fNamespace와 동일)과 class 이름이 같으면 충돌 → 클래스명에 'Control' 접미사
+  var baseUnitName := System.IO.Path.GetFileNameWithoutExtension(fPasFileName);
+  if fClassName = baseUnitName then
+  begin
+    var newClassName := fClassName + 'Control';
+    var oldXClass := fNamespace + '.' + fClassName;
+    var newXClass := fNamespace + '.' + newClassName;
+    xaml := xaml.Replace('x:Class="' + oldXClass + '"', 'x:Class="' + newXClass + '"');
+    fXamlEditor.Text := xaml;
+    fClassName := newClassName;
+  end;
+
   controls := ParseControlsFromXaml(xaml);
 
-  unitName := System.IO.Path.GetFileNameWithoutExtension(fPasFileName); //fClassName + 'Unit';
+  // ★ 수정: library 이름은 pas 파일명과 반드시 일치해야 함
+  unitName := baseUnitName;
 
   sb := new System.Text.StringBuilder();
-  sb.AppendLine('unit ' + unitName + ';');
+  // ★ 수정: unit → library
+  //   PascalABC.NET에서 어셈블리(.dll) 산출물을 만들려면 unit이 아니라
+  //   library 키워드를 써야 한다. unit은 같은 컴파일 단위 내부에서만
+  //   참조되는 모듈이라 콘솔 컴파일러가 .pcu(캐시)만 만들고 .dll을
+  //   생성하지 않는다.
+  sb.AppendLine('library ' + unitName + ';');
   sb.AppendLine('');
   sb.AppendLine('{$reference PresentationFramework.dll}');
   sb.AppendLine('{$reference PresentationCore.dll}');
@@ -1106,17 +1137,20 @@ begin
   AppendOutput('대상: ' + pasPath, false);
   AppendOutput('', false);
 
+  // ★ 수정: library 키워드 사용으로 OutType= 인자는 더 이상 필요 없음.
+  //   program(EXE/winexe) 산출물은 .exe, library(DLL) 산출물은 .dll.
+  var outExt := '.exe';
+  if fProjectType = ptWpfControlLibrary then
+    outExt := '.dll';
   fBuildExePath := fProjectPath +
-    System.IO.Path.GetFileNameWithoutExtension(fPasFileName) + '.exe';
+    System.IO.Path.GetFileNameWithoutExtension(fPasFileName) + outExt;
 
   try
     var psi              := new System.Diagnostics.ProcessStartInfo();
     psi.FileName         := compilerPath;
-    //psi.Arguments        := '"' + pasPath + '" /noconsole';
-    var extraArgs := '';
-    if fProjectType = ptWpfApp then
-      extraArgs := ' /noconsole';
-    psi.Arguments := '"' + pasPath + '"' + extraArgs;
+    // ★ 수정: OutType= 인자 제거 (library 키워드가 출력 형식을 자동 결정).
+    //   /noconsole은 콘솔 창 없는 빌드(GUI 앱/라이브러리 모두)에 필요.
+    psi.Arguments := '"' + pasPath + '" /noconsole';
 
     psi.WorkingDirectory := fProjectPath;
     psi.UseShellExecute  := false;
@@ -1232,10 +1266,18 @@ end;
 
 // =============================================================================
 // LaunchBuiltExe
+//   ★ 수정: DLL(컨트롤 라이브러리) 모드는 단독 실행이 불가능하므로
+//           별도의 테스트 호스트 EXE를 생성해 실행하는 경로로 분기.
 // =============================================================================
 procedure Form1.LaunchBuiltExe;
 begin
   if not System.IO.File.Exists(fBuildExePath) then exit;
+
+  if fProjectType = ptWpfControlLibrary then
+  begin
+    LaunchControlTestHost();
+    exit;
+  end;
 
   AppendOutput('', false);
   AppendOutput('====== 실행: ' + fBuildExePath + ' ======', false);
@@ -1257,6 +1299,142 @@ begin
     begin
       AppendOutput('실행 오류: ' + ex.Message, true);
       System.Windows.Forms.MessageBox.Show('실행 오류: ' + ex.Message);
+    end;
+  end;
+end;
+
+// =============================================================================
+// LaunchControlTestHost — DLL(UserControl)을 임시 호스트 EXE로 테스트 실행
+//   별도의 작은 program 소스(_TestHost.pas)를 같은 폴더에 생성하여
+//   {$reference <라이브러리>.dll}로 빌드된 DLL을 참조하고, UserControl을
+//   임시 Window에 올려 보여준다. 디자이너 프로세스 자신이 DLL을 로드하지
+//   않으므로 다음 빌드 시 파일 잠금 문제가 발생하지 않는다.
+// =============================================================================
+procedure Form1.LaunchControlTestHost;
+var
+  hostPasPath  : string;
+  hostExePath  : string;
+  hostName     : string;
+  unitName     : string;
+  compilerPath : string;
+  sb           : System.Text.StringBuilder;
+begin
+  unitName := System.IO.Path.GetFileNameWithoutExtension(fPasFileName);
+  hostName := unitName + '_TestHost';
+  hostPasPath := fProjectPath + hostName + '.pas';
+  hostExePath := fProjectPath + hostName + '.exe';
+
+  AppendOutput('', false);
+  AppendOutput('====== 컨트롤 테스트 호스트 생성 ======', false);
+
+  sb := new System.Text.StringBuilder();
+  sb.AppendLine('program ' + hostName + ';');
+  sb.AppendLine('');
+  sb.AppendLine('{$apptype windows}');
+  sb.AppendLine('{$reference PresentationFramework.dll}');
+  sb.AppendLine('{$reference PresentationCore.dll}');
+  sb.AppendLine('{$reference WindowsBase.dll}');
+  sb.AppendLine('{$reference System.Windows.Forms.dll}');
+  sb.AppendLine('{$reference ' + unitName + '.dll}');
+  sb.AppendLine('');
+  sb.AppendLine('uses');
+  sb.AppendLine('  System.Windows,');
+  sb.AppendLine('  System.Threading;');
+  sb.AppendLine('');
+  sb.AppendLine('procedure RunHost;');
+  sb.AppendLine('begin');
+  sb.AppendLine('  try');
+  sb.AppendLine('    var app  := new System.Windows.Application();');
+  sb.AppendLine('    var ctrl := new ' + fClassName + '();');
+  sb.AppendLine('    var win  := new System.Windows.Window();');
+  sb.AppendLine('    win.Title := ' + #39 + '컨트롤 테스트: ' + fClassName + #39 + ';');
+  sb.AppendLine('    win.Content := ctrl;');
+  sb.AppendLine('    win.SizeToContent := System.Windows.SizeToContent.WidthAndHeight;');
+  sb.AppendLine('    win.MinWidth  := 200;');
+  sb.AppendLine('    win.MinHeight := 100;');
+  sb.AppendLine('    app.Run(win);');
+  sb.AppendLine('  except');
+  sb.AppendLine('    on ex: System.Exception do');
+  sb.AppendLine('      System.Windows.Forms.MessageBox.Show(');
+  sb.AppendLine('        ex.ToString(), ' + #39 + '테스트 호스트 오류' + #39 + ',');
+  sb.AppendLine('        System.Windows.Forms.MessageBoxButtons.OK,');
+  sb.AppendLine('        System.Windows.Forms.MessageBoxIcon.Error);');
+  sb.AppendLine('  end;');
+  sb.AppendLine('end;');
+  sb.AppendLine('');
+  sb.AppendLine('begin');
+  sb.AppendLine('  var t := new System.Threading.Thread(RunHost);');
+  sb.AppendLine('  t.SetApartmentState(System.Threading.ApartmentState.STA);');
+  sb.AppendLine('  t.IsBackground := false;');
+  sb.AppendLine('  t.Start();');
+  sb.AppendLine('  t.Join();');
+  sb.AppendLine('end.');
+
+  try
+    System.IO.File.WriteAllText(hostPasPath, sb.ToString(), System.Text.Encoding.UTF8);
+    AppendOutput('파일 저장: ' + hostPasPath, false);
+  except
+    on ex: System.Exception do
+    begin
+      AppendOutput('호스트 파일 저장 오류: ' + ex.Message, true);
+      exit;
+    end;
+  end;
+
+  compilerPath := FindPabcCompiler();
+  if compilerPath = '' then
+  begin
+    AppendOutput('pabcnetc.exe를 찾을 수 없습니다.', true);
+    exit;
+  end;
+
+  try
+    var psi              := new System.Diagnostics.ProcessStartInfo();
+    psi.FileName         := compilerPath;
+    psi.Arguments        := '"' + hostPasPath + '" /noconsole';
+    psi.WorkingDirectory := fProjectPath;
+    psi.UseShellExecute  := false;
+    psi.CreateNoWindow   := true;
+    psi.RedirectStandardOutput := true;
+    psi.RedirectStandardError  := true;
+    psi.StandardOutputEncoding := System.Text.Encoding.Default;
+    psi.StandardErrorEncoding  := System.Text.Encoding.Default;
+
+    var hostProc := new System.Diagnostics.Process();
+    hostProc.StartInfo := psi;
+    hostProc.Start();
+    var outText := hostProc.StandardOutput.ReadToEnd();
+    var errText := hostProc.StandardError.ReadToEnd();
+    hostProc.WaitForExit();
+
+    if outText.Trim() <> '' then AppendOutput(outText, false);
+    if errText.Trim() <> '' then AppendOutput(errText, true);
+
+    if (hostProc.ExitCode <> 0) or not System.IO.File.Exists(hostExePath) then
+    begin
+      AppendOutput('테스트 호스트 빌드 실패.', true);
+      exit;
+    end;
+
+    AppendOutput('테스트 호스트 빌드 성공: ' + hostExePath, false);
+    AppendOutput('====== 실행: ' + hostExePath + ' ======', false);
+
+    var runPsi              := new System.Diagnostics.ProcessStartInfo();
+    runPsi.FileName         := hostExePath;
+    runPsi.WorkingDirectory := fProjectPath;
+    runPsi.UseShellExecute  := false;
+    runPsi.CreateNoWindow   := false;
+
+    fRunningProcess := new System.Diagnostics.Process();
+    fRunningProcess.StartInfo := runPsi;
+    fRunningProcess.EnableRaisingEvents := true;
+    fRunningProcess.Exited += OnRunProcessExited;
+    fRunningProcess.Start();
+  except
+    on ex: System.Exception do
+    begin
+      AppendOutput('테스트 호스트 실행 오류: ' + ex.Message, true);
+      System.Windows.Forms.MessageBox.Show('테스트 호스트 실행 오류: ' + ex.Message);
     end;
   end;
 end;
@@ -1900,6 +2078,21 @@ begin
       end;
     except end;
   except end;
+
+  // ★ 추가: 컨트롤 라이브러리 테스트 호스트 프로세스도 함께 정리
+  try
+    var hostExeNameOnly := System.IO.Path.GetFileNameWithoutExtension(fPasFileName) + '_TestHost';
+    procs := System.Diagnostics.Process.GetProcessesByName(hostExeNameOnly);
+    for idx := 0 to procs.Length - 1 do
+    try
+      if not procs[idx].HasExited then
+      begin
+        procs[idx].Kill();
+        procs[idx].WaitForExit(2000);
+      end;
+    except end;
+  except end;
+
   System.Threading.Thread.Sleep(200);
 end;
 
@@ -2503,7 +2696,7 @@ end;
 procedure Form1.OnAbout(sender: System.Object; e: System.EventArgs);
 begin
   System.Windows.Forms.MessageBox.Show(
-    'PascalABC-WPF-Designer Ver 2.1.0' + System.Environment.NewLine + System.Environment.NewLine +
+    'PascalABC-WPF-Designer Ver 2.1.1' + System.Environment.NewLine + System.Environment.NewLine +
     '■ VS 호환 XAML 지원' + System.Environment.NewLine +
     '  · x:Class, x:Name, 이벤트 속성 100% 호환' + System.Environment.NewLine +
     '  · mc:Ignorable, d:DesignHeight/Width 지원' + System.Environment.NewLine + System.Environment.NewLine +

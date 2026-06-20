@@ -146,6 +146,14 @@ type
 
     fRunningProcess : System.Diagnostics.Process;
 
+    // ── 빌드 프로세스 (실시간 파이프 리다이렉트 + /noconsole) ──
+    fBuildProcess     : System.Diagnostics.Process;
+    fBuildStopwatch   : System.Diagnostics.Stopwatch;
+    fBuildExePath     : string;
+    fBuildHadStartErr : boolean;
+    fBuildStartErrMsg : string;
+    fRunAfterBuild    : boolean;
+
     menuStrip     : System.Windows.Forms.MenuStrip;
     hostDesign    : System.Windows.Forms.Integration.ElementHost;
     hostLeft      : System.Windows.Forms.Integration.ElementHost;
@@ -159,7 +167,13 @@ type
     tabXaml     : System.Windows.Forms.TabPage;
     tabCode     : System.Windows.Forms.TabPage;
 
-    lvErrors    : System.Windows.Forms.ListView;
+    // ── 하단 출력 패널 (탭) ──────────────────────────────
+    bottomTabs   : System.Windows.Forms.TabControl;
+    tabErrors    : System.Windows.Forms.TabPage;
+    tabOutput    : System.Windows.Forms.TabPage;
+    lvErrors     : System.Windows.Forms.ListView;
+    txtOutput    : System.Windows.Forms.RichTextBox;
+
     splitMain   : System.Windows.Forms.SplitContainer;
     splitDesign : System.Windows.Forms.SplitContainer;
     splitRight  : System.Windows.Forms.SplitContainer;
@@ -203,6 +217,15 @@ type
     procedure OnBuild(sender: System.Object; e: System.EventArgs);
     procedure OnRun(sender: System.Object; e: System.EventArgs);
     function  FindPabcCompiler: string;
+    procedure StartBuildProcess;
+    procedure OnBuildOutputLine(sender: System.Object; e: System.Diagnostics.DataReceivedEventArgs);
+    procedure OnBuildErrorLine(sender: System.Object; e: System.Diagnostics.DataReceivedEventArgs);
+    procedure OnBuildProcessExited(sender: System.Object; e: System.EventArgs);
+    procedure FinishBuild;
+    procedure LaunchBuiltExe;
+
+    // ── 실행 프로세스 종료 알림용 named 핸들러 ───────────
+    procedure OnRunProcessExited(sender: System.Object; e: System.EventArgs);
     procedure OnErrorsCopy(sender: System.Object; e: System.EventArgs);
     procedure OnErrorsKeyDown(sender: System.Object; e: System.Windows.Forms.KeyEventArgs);
     procedure KillPreviousBuildProcesses;
@@ -215,6 +238,12 @@ type
     procedure OnAbout(sender: System.Object; e: System.EventArgs);
 
     procedure OnBrowseClick(sender: System.Object; e: System.EventArgs);
+
+    // ── 출력(Output) 패널 헬퍼 ───────────────────────────
+    procedure AppendOutput(text: string; isError: boolean);
+    procedure ClearOutput;
+    procedure OnOutputCopy(sender: System.Object; e: System.EventArgs);
+    procedure OnOutputClear(sender: System.Object; e: System.EventArgs);
 
     // XAML 처리
     procedure LoadXaml(xaml: string);
@@ -253,7 +282,7 @@ type
 constructor Form1.Create;
 begin
   inherited Create;
-  Self.Text   := 'PascalABC-WPF-Designer Ver 2.0.2';
+  Self.Text   := 'PascalABC-WPF-Designer Ver 2.1.0';
   Self.Width  := 1600;
   Self.Height := 950;
 
@@ -416,14 +445,8 @@ begin
   Result := s;
 end;
 
-
 // =============================================================================
-// ★ PrepareXamlForBuild
-//   VS 컴파일 XAML과 동일한 방식의 런타임 로딩(XamlObjectWriter +
-//   RootObjectInstance)을 위해 XAML을 준비한다.
-//   Window/UserControl의 Background, Resources, Title, Width, Height,
-//   Content 등 전체 구조를 그대로 유지한다. 이벤트 속성만 제거한다
-//   (이벤트는 코드에서 직접 += 로 연결하므로 XAML에는 불필요).
+// PrepareXamlForBuild
 // =============================================================================
 function Form1.PrepareXamlForBuild(xaml: string): string;
 var
@@ -444,7 +467,7 @@ begin
   // 이벤트 속성 제거 (코드에서 직접 연결)
   s := StripEventAttributesForRuntime(s);
 
-  // 디자인 타임 전용 네임스페이스 제거 (안전을 위해 유지)
+  // 디자인 타임 전용 네임스페이스 제거
   re := new System.Text.RegularExpressions.Regex('\s+mc:Ignorable\s*=\s*"[^"]*"');
   s  := re.Replace(s, '');
   re := new System.Text.RegularExpressions.Regex('\s+xmlns:mc\s*=\s*"[^"]*"');
@@ -454,16 +477,11 @@ begin
   re := new System.Text.RegularExpressions.Regex('\s+xmlns:d\s*=\s*"[^"]*"');
   s  := re.Replace(s, '');
 
-  // ★ 핵심: Window/UserControl 전체를 그대로 유지한다.
-  //   (Background, Resources, Title, Width, Height, Content 전부 보존)
   Result := s;
 end;
 
 // =============================================================================
-// ★ GenerateInitializeComponent
-//   XamlObjectWriter + RootObjectInstance(Self)를 사용해
-//   VS 컴파일 앱과 동일하게 XAML 전체를 기존 Self 위에 합친다.
-//   → Title/Width/Height/Background/Resources를 별도로 파싱/세팅할 필요 없음.
+// GenerateInitializeComponent
 // =============================================================================
 function Form1.GenerateInitializeComponent(controls: System.Collections.Generic.List<TControlInfo>): string;
 var
@@ -557,7 +575,7 @@ begin
   ParseXClassInfo(xaml, fNamespace, fClassName);
   controls := ParseControlsFromXaml(xaml);
 
-  programName := fNamespace;  // XAML x:Class의 네임스페이스와 일치 //fClassName + 'App';
+  programName := fNamespace;
 
   sb := new System.Text.StringBuilder();
 
@@ -568,13 +586,13 @@ begin
   sb.AppendLine('{$reference PresentationCore.dll}');
   sb.AppendLine('{$reference WindowsBase.dll}');
   sb.AppendLine('{$reference System.Windows.Forms.dll}');
-  sb.AppendLine('{$reference System.Xaml.dll}');   // ★ 추가
+  sb.AppendLine('{$reference System.Xaml.dll}');
   sb.AppendLine('');
   sb.AppendLine('uses');
   sb.AppendLine('  System.Windows,');
   sb.AppendLine('  System.Windows.Controls,');
   sb.AppendLine('  System.Windows.Markup,');
-  sb.AppendLine('  System.Xaml,');                 // ★ 추가
+  sb.AppendLine('  System.Xaml,');
   sb.AppendLine('  System.IO,');
   sb.AppendLine('  System.Threading;');
   sb.AppendLine('');
@@ -688,7 +706,7 @@ begin
   ParseXClassInfo(xaml, fNamespace, fClassName);
   controls := ParseControlsFromXaml(xaml);
 
-  unitName := fClassName + 'Unit';
+  unitName := System.IO.Path.GetFileNameWithoutExtension(fPasFileName); //fClassName + 'Unit';
 
   sb := new System.Text.StringBuilder();
   sb.AppendLine('unit ' + unitName + ';');
@@ -696,13 +714,13 @@ begin
   sb.AppendLine('{$reference PresentationFramework.dll}');
   sb.AppendLine('{$reference PresentationCore.dll}');
   sb.AppendLine('{$reference WindowsBase.dll}');
-  sb.AppendLine('{$reference System.Xaml.dll}');   // ★ 추가  
+  sb.AppendLine('{$reference System.Xaml.dll}');
   sb.AppendLine('');
   sb.AppendLine('uses');
   sb.AppendLine('  System.Windows,');
   sb.AppendLine('  System.Windows.Controls,');
   sb.AppendLine('  System.Windows.Markup,');
-  sb.AppendLine('  System.Xaml,');                 // ★ 추가
+  sb.AppendLine('  System.Xaml,');
   sb.AppendLine('  System.IO;');
   sb.AppendLine('');
   sb.AppendLine('type');
@@ -931,29 +949,101 @@ begin
 end;
 
 // =============================================================================
-// OnBuild  ★ 핵심 수정: ExtractInnerXamlForBuild 사용
+// AppendOutput / ClearOutput
+//   ★ 수정: new System.Action(...) 델리게이트 생성자 호출 제거
+//           → 변수에 메서드 참조를 직접 대입하는 방식으로 변경
+// =============================================================================
+procedure Form1.AppendOutput(text: string; isError: boolean);
+var
+  args : array of System.Object;
+  d    : System.Action<string, boolean>;
+begin
+  if txtOutput = nil then exit;
+  if txtOutput.InvokeRequired then
+  begin
+    // ★ 수정: new System.Action<string,boolean>(AppendOutput) → 직접 대입
+    d       := AppendOutput;
+    args    := new System.Object[2];
+    args[0] := text;
+    args[1] := isError;
+    txtOutput.Invoke(d, args);
+    exit;
+  end;
+  txtOutput.SelectionStart  := txtOutput.TextLength;
+  txtOutput.SelectionLength := 0;
+  if isError then
+    txtOutput.SelectionColor := System.Drawing.Color.FromArgb(255, 90, 90)
+  else
+    txtOutput.SelectionColor := System.Drawing.Color.FromArgb(220, 220, 220);
+  txtOutput.AppendText(text + System.Environment.NewLine);
+  txtOutput.SelectionStart := txtOutput.TextLength;
+  txtOutput.ScrollToCaret();
+end;
+
+procedure Form1.ClearOutput;
+var
+  d: System.Action;
+begin
+  if txtOutput = nil then exit;
+  if txtOutput.InvokeRequired then
+  begin
+    // ★ 수정: new System.Action(ClearOutput) → 직접 대입
+    d := ClearOutput;
+    txtOutput.Invoke(d);
+    exit;
+  end;
+  txtOutput.Clear();
+end;
+
+procedure Form1.OnOutputCopy(sender: System.Object; e: System.EventArgs);
+begin
+  if txtOutput.SelectedText <> '' then
+    System.Windows.Forms.Clipboard.SetText(txtOutput.SelectedText)
+  else if txtOutput.Text <> '' then
+    System.Windows.Forms.Clipboard.SetText(txtOutput.Text);
+end;
+
+procedure Form1.OnOutputClear(sender: System.Object; e: System.EventArgs);
+begin
+  ClearOutput();
+end;
+
+// =============================================================================
+// 실행 프로세스 종료 알림용 named 핸들러
+// =============================================================================
+procedure Form1.OnRunProcessExited(sender: System.Object; e: System.EventArgs);
+begin
+  AppendOutput('====== 프로세스 종료 (종료코드: ' +
+    fRunningProcess.ExitCode.ToString() + ') ======', false);
+end;
+
+// =============================================================================
+// OnBuild
 // =============================================================================
 procedure Form1.OnBuild(sender: System.Object; e: System.EventArgs);
 var
-  xamlPath    : string;
-  pasPath     : string;
-  tempBat     : string;
-  compilerPath: string;
-  exitCode    : integer;
-  hadError    : boolean;
-  errMsg      : string;
-  exePath     : string;
-  buildXaml   : string;
+  xamlPath  : string;
+  pasPath   : string;
+  buildXaml : string;
+  hadError  : boolean;
+  errMsg    : string;
 begin
+  if fBuildProcess <> nil then
+  try
+    if not fBuildProcess.HasExited then exit;
+  except end;
+
   hadError := false;
   errMsg   := '';
-  exitCode := -1;
 
   KillPreviousBuildProcesses();
 
+  ClearOutput();
+  bottomTabs.SelectedTab := tabOutput;
+  AppendOutput('====== 빌드 시작: ' + System.DateTime.Now.ToString('HH:mm:ss') + ' ======', false);
+
   ParseXClassInfo(fXamlEditor.Text, fNamespace, fClassName);
 
-  // 코드 탭에 내용이 없을 때만 자동 생성 (사용자 코드 보호)
   if fCodeEditor.Text.Trim() = '' then
   begin
     case fProjectType of
@@ -964,24 +1054,46 @@ begin
 
   xamlPath := fProjectPath + fXamlFileName;
   pasPath  := fProjectPath + fPasFileName;
-  tempBat  := fProjectPath + 'build.bat';
 
   try
-    // ★ 수정: Window 래핑 대신 내부 콘텐츠(Grid 등)만 추출하여 저장
     buildXaml := PrepareXamlForBuild(fXamlEditor.Text);
     System.IO.File.WriteAllText(xamlPath, buildXaml, System.Text.Encoding.UTF8);
     System.IO.File.WriteAllText(pasPath, fCodeEditor.Text, System.Text.Encoding.UTF8);
+    AppendOutput('파일 저장: ' + xamlPath, false);
+    AppendOutput('파일 저장: ' + pasPath, false);
   except
     on ex: System.Exception do
     begin errMsg := ex.Message; hadError := true; end;
   end;
-  if hadError then begin
-    System.Windows.Forms.MessageBox.Show('파일 저장 오류: ' + errMsg); exit;
+  if hadError then
+  begin
+    AppendOutput('파일 저장 오류: ' + errMsg, true);
+    lvErrors.Items.Clear();
+    var item0 := new System.Windows.Forms.ListViewItem('파일 저장 오류: ' + errMsg);
+    item0.ForeColor := System.Drawing.Color.Red;
+    lvErrors.Items.Add(item0);
+    System.Windows.Forms.MessageBox.Show('파일 저장 오류: ' + errMsg);
+    exit;
   end;
+
+  StartBuildProcess();
+end;
+
+// =============================================================================
+// StartBuildProcess
+// =============================================================================
+procedure Form1.StartBuildProcess;
+var
+  compilerPath: string;
+  pasPath     : string;
+begin
+  fBuildHadStartErr := false;
+  fBuildStartErrMsg := '';
 
   compilerPath := FindPabcCompiler();
   if compilerPath = '' then
   begin
+    AppendOutput('pabcnetc.exe를 찾을 수 없습니다.', true);
     System.Windows.Forms.MessageBox.Show(
       'pabcnetc.exe를 찾을 수 없습니다.', '컴파일러 없음',
       System.Windows.Forms.MessageBoxButtons.OK,
@@ -989,103 +1101,162 @@ begin
     exit;
   end;
 
-  try
-    var bat := new System.Text.StringBuilder();
-    bat.AppendLine('@echo off');
-    bat.AppendLine('"' + compilerPath + '" "' + pasPath + '"');
-    bat.AppendLine('exit %ERRORLEVEL%');
-    System.IO.File.WriteAllText(tempBat, bat.ToString(), System.Text.Encoding.Default);
-  except
-    on ex: System.Exception do
-    begin errMsg := ex.Message; hadError := true; end;
-  end;
-  if hadError then begin
-    System.Windows.Forms.MessageBox.Show('빌드 스크립트 오류: ' + errMsg); exit;
-  end;
+  pasPath := fProjectPath + fPasFileName;
+  AppendOutput('컴파일러: ' + compilerPath, false);
+  AppendOutput('대상: ' + pasPath, false);
+  AppendOutput('', false);
+
+  fBuildExePath := fProjectPath +
+    System.IO.Path.GetFileNameWithoutExtension(fPasFileName) + '.exe';
 
   try
     var psi              := new System.Diagnostics.ProcessStartInfo();
-    psi.FileName         := 'cmd.exe';
-    psi.Arguments        := '/c "' + tempBat + '"';
+    psi.FileName         := compilerPath;
+    //psi.Arguments        := '"' + pasPath + '" /noconsole';
+    var extraArgs := '';
+    if fProjectType = ptWpfApp then
+      extraArgs := ' /noconsole';
+    psi.Arguments := '"' + pasPath + '"' + extraArgs;
+
     psi.WorkingDirectory := fProjectPath;
-    psi.UseShellExecute  := true;
-    psi.CreateNoWindow   := false;
-    psi.WindowStyle      := System.Diagnostics.ProcessWindowStyle.Minimized;
-    var proc := new System.Diagnostics.Process();
-    proc.StartInfo := psi;
-    proc.Start();
-    proc.WaitForExit(60000);
-    if not proc.HasExited then
-    begin
-      try proc.Kill(); except end;
-      errMsg := '컴파일 시간 초과'; hadError := true;
-    end
-    else
-      exitCode := proc.ExitCode;
+    psi.UseShellExecute  := false;
+    psi.CreateNoWindow   := true;
+    psi.RedirectStandardOutput := true;
+    psi.RedirectStandardError  := true;
+    psi.StandardOutputEncoding := System.Text.Encoding.Default;
+    psi.StandardErrorEncoding  := System.Text.Encoding.Default;
+
+    fBuildProcess                     := new System.Diagnostics.Process();
+    fBuildProcess.StartInfo           := psi;
+    fBuildProcess.EnableRaisingEvents := true;
+    fBuildProcess.OutputDataReceived  += OnBuildOutputLine;
+    fBuildProcess.ErrorDataReceived   += OnBuildErrorLine;
+    fBuildProcess.Exited              += OnBuildProcessExited;
+
+    fBuildStopwatch := System.Diagnostics.Stopwatch.StartNew();
+
+    fBuildProcess.Start();
+    fBuildProcess.BeginOutputReadLine();
+    fBuildProcess.BeginErrorReadLine();
   except
     on ex: System.Exception do
-    begin errMsg := ex.Message; hadError := true; end;
+    begin
+      AppendOutput('빌드 시작 오류: ' + ex.Message, true);
+      System.Windows.Forms.MessageBox.Show('빌드 시작 오류: ' + ex.Message);
+    end;
   end;
+end;
 
-  try
-    if System.IO.File.Exists(tempBat) then System.IO.File.Delete(tempBat);
-  except end;
+// =============================================================================
+// OnBuildOutputLine / OnBuildErrorLine
+// =============================================================================
+procedure Form1.OnBuildOutputLine(sender: System.Object; e: System.Diagnostics.DataReceivedEventArgs);
+begin
+  if e.Data = nil then exit;
+  if e.Data.ToLower().Contains('error') or e.Data.Contains('오류') then
+    AppendOutput(e.Data, true)
+  else
+    AppendOutput(e.Data, false);
+end;
 
-  if hadError then
+procedure Form1.OnBuildErrorLine(sender: System.Object; e: System.Diagnostics.DataReceivedEventArgs);
+begin
+  if e.Data = nil then exit;
+  AppendOutput(e.Data, true);
+end;
+
+// =============================================================================
+// OnBuildProcessExited
+//   ★ 수정: new System.Action(FinishBuild) → 변수에 직접 대입
+// =============================================================================
+procedure Form1.OnBuildProcessExited(sender: System.Object; e: System.EventArgs);
+var
+  act: System.Action;
+begin
+  try fBuildProcess.WaitForExit(); except end;
+
+  if Self.InvokeRequired then
+  begin
+    // ★ 수정: new System.Action(FinishBuild) 생성자 호출 제거
+    //         PascalABC.NET에서 델리게이트 타입에 new 사용 불가
+    act := FinishBuild;
+    Self.Invoke(act);
+  end
+  else
+    FinishBuild();
+end;
+
+// =============================================================================
+// FinishBuild
+// =============================================================================
+procedure Form1.FinishBuild;
+var
+  exitCode : integer;
+begin
+  fBuildStopwatch.Stop();
+  exitCode := -1;
+  try exitCode := fBuildProcess.ExitCode; except end;
+
+  AppendOutput('', false);
+  AppendOutput('====== 빌드 종료 (경과: ' +
+    (fBuildStopwatch.ElapsedMilliseconds / 1000.0).ToString('0.00') + '초, 종료코드: ' +
+    exitCode.ToString() + ') ======', false);
+
+  if (exitCode = 0) and System.IO.File.Exists(fBuildExePath) then
   begin
     lvErrors.Items.Clear();
-    var item := new System.Windows.Forms.ListViewItem('빌드 오류: ' + errMsg);
-    item.ForeColor := System.Drawing.Color.Red;
-    lvErrors.Items.Add(item);
-    System.Windows.Forms.MessageBox.Show('빌드 오류: ' + errMsg);
-    exit;
-  end;
-
-  exePath := fProjectPath +
-    System.IO.Path.GetFileNameWithoutExtension(fPasFileName) + '.exe';
-
-  if System.IO.File.Exists(exePath) then
-  begin
-    lvErrors.Items.Clear();
-    var item := new System.Windows.Forms.ListViewItem('빌드 성공: ' + exePath);
+    var item := new System.Windows.Forms.ListViewItem('빌드 성공: ' + fBuildExePath);
     item.ForeColor := System.Drawing.Color.FromArgb(0, 128, 0);
     lvErrors.Items.Add(item);
-    System.Windows.Forms.MessageBox.Show(
-      '빌드 성공!' + #13#10 + exePath, '빌드',
-      System.Windows.Forms.MessageBoxButtons.OK,
-      System.Windows.Forms.MessageBoxIcon.Information);
+
+    if fRunAfterBuild then
+      LaunchBuiltExe();
   end
   else
   begin
-    lvErrors.Items.Clear();
-    var item := new System.Windows.Forms.ListViewItem(
-      '빌드 실패 — 콘솔 창 오류를 확인하세요. (종료코드: ' + exitCode.ToString() + ')');
-    item.ForeColor := System.Drawing.Color.Red;
-    lvErrors.Items.Add(item);
-    System.Windows.Forms.MessageBox.Show(
-      '빌드 실패 — 콘솔 창의 오류 메시지를 확인하세요.', '빌드 실패',
-      System.Windows.Forms.MessageBoxButtons.OK,
-      System.Windows.Forms.MessageBoxIcon.Error);
+    ShowBuildErrors(txtOutput.Text);
+    bottomTabs.SelectedTab := tabErrors;
   end;
+
+  fRunAfterBuild := false;
 end;
 
 // =============================================================================
 // OnRun
 // =============================================================================
 procedure Form1.OnRun(sender: System.Object; e: System.EventArgs);
-var
-  exePath: string;
 begin
+  fRunAfterBuild := true;
   OnBuild(sender, e);
-  exePath := fProjectPath +
-    System.IO.Path.GetFileNameWithoutExtension(fPasFileName) + '.exe';
-  if System.IO.File.Exists(exePath) then
-  begin
-    try
-      fRunningProcess := System.Diagnostics.Process.Start(exePath);
-    except
-      on ex: System.Exception do
-        System.Windows.Forms.MessageBox.Show('실행 오류: ' + ex.Message);
+end;
+
+// =============================================================================
+// LaunchBuiltExe
+// =============================================================================
+procedure Form1.LaunchBuiltExe;
+begin
+  if not System.IO.File.Exists(fBuildExePath) then exit;
+
+  AppendOutput('', false);
+  AppendOutput('====== 실행: ' + fBuildExePath + ' ======', false);
+  try
+    var psi              := new System.Diagnostics.ProcessStartInfo();
+    psi.FileName         := fBuildExePath;
+    psi.WorkingDirectory := fProjectPath;
+    psi.UseShellExecute  := false;
+    psi.CreateNoWindow   := false;
+
+    fRunningProcess := new System.Diagnostics.Process();
+    fRunningProcess.StartInfo := psi;
+    fRunningProcess.EnableRaisingEvents := true;
+    fRunningProcess.Exited += OnRunProcessExited;
+
+    fRunningProcess.Start();
+  except
+    on ex: System.Exception do
+    begin
+      AppendOutput('실행 오류: ' + ex.Message, true);
+      System.Windows.Forms.MessageBox.Show('실행 오류: ' + ex.Message);
     end;
   end;
 end;
@@ -1173,7 +1344,6 @@ begin
   if tabControl.SelectedTab = tabCode then
   begin
     ParseXClassInfo(fXamlEditor.Text, fNamespace, fClassName);
-    // 코드 탭이 비어있을 때만 자동 생성 (사용자 코드 보호)
     if fCodeEditor.Text.Trim() = '' then
     begin
       case fProjectType of
@@ -1295,6 +1465,9 @@ begin
   fXamlEditor.Text := xaml;
 end;
 
+// =============================================================================
+// PreprocessXaml
+// =============================================================================
 function Form1.PreprocessXaml(xaml: string): string;
 var
   s        : string;
@@ -1339,8 +1512,6 @@ begin
       if h = '' then h := '450';
       sizeStr := ' Width="' + w + '" Height="' + h + '"';
 
-      // 속성 요소(Window.Background, Window.Resources)와
-      // 실제 콘텐츠 자식을 분리
       resInner := '';
       bgInner  := '';
       inner    := '';
@@ -1354,7 +1525,6 @@ begin
           bgInner := (n as System.Xml.XmlElement).InnerXml
         else if not n.LocalName.Contains('.') then
           inner := inner + n.OuterXml;
-        // 그 외 속성 요소(Window.Style 등)는 디자이너 미리보기에서 무시
       end;
     except
       inner    := '';
@@ -1700,6 +1870,19 @@ var
   procs      : array of System.Diagnostics.Process;
   idx        : integer;
 begin
+  if fBuildProcess <> nil then
+  begin
+    try if not fBuildProcess.HasExited then fBuildProcess.Kill(); except end;
+    fBuildProcess := nil;
+  end;
+  try
+    procs := System.Diagnostics.Process.GetProcessesByName('pabcnetc');
+    for idx := 0 to procs.Length - 1 do
+    try
+      if not procs[idx].HasExited then procs[idx].Kill();
+    except end;
+  except end;
+
   if fRunningProcess <> nil then
   begin
     try if not fRunningProcess.HasExited then fRunningProcess.Kill(); except end;
@@ -1814,7 +1997,7 @@ begin
   lvErrors.Items.Clear();
   if output.Trim() = '' then
   begin
-    item := new System.Windows.Forms.ListViewItem('빌드 실패 — 콘솔 창을 확인하세요.');
+    item := new System.Windows.Forms.ListViewItem('빌드 실패 — 출력 탭을 확인하세요.');
     item.ForeColor := System.Drawing.Color.Red;
     lvErrors.Items.Add(item);
   end
@@ -1825,6 +2008,7 @@ begin
     foreach line in lines do
     begin
       if line.Trim() = '' then continue;
+      if line.StartsWith('======') then continue;
       m := re.Match(line.Trim());
       if m.Success then
       begin
@@ -1832,12 +2016,13 @@ begin
         item.SubItems.Add(m.Groups[2].Value);
         item.SubItems.Add(m.Groups[1].Value);
         item.ForeColor := System.Drawing.Color.Red;
-      end
-      else
-      begin
-        item := new System.Windows.Forms.ListViewItem(line.Trim());
-        item.SubItems.Add(''); item.SubItems.Add('');
+        lvErrors.Items.Add(item);
       end;
+    end;
+    if lvErrors.Items.Count = 0 then
+    begin
+      item := new System.Windows.Forms.ListViewItem('빌드 실패 — 출력 탭에서 전체 로그를 확인하세요.');
+      item.ForeColor := System.Drawing.Color.Red;
       lvErrors.Items.Add(item);
     end;
   end;
@@ -2087,8 +2272,6 @@ var
   editorRow0   : System.Windows.Controls.RowDefinition;
   editorRow1   : System.Windows.Controls.RowDefinition;
   applyBtn     : System.Windows.Controls.Button;
-  errPanel     : System.Windows.Forms.Panel;
-  errLabel     : System.Windows.Forms.Label;
   colMsg, colLine, colFile: System.Windows.Forms.ColumnHeader;
 begin
   fPropView       := new ICSharpCode.WpfDesign.Designer.PropertyGrid.PropertyGridView();
@@ -2156,13 +2339,7 @@ begin
   tabControl.TabPages.Add(tabXaml);
   tabControl.TabPages.Add(tabCode);
 
-  errLabel           := new System.Windows.Forms.Label();
-  errLabel.Text      := '오류 목록';
-  errLabel.Dock      := System.Windows.Forms.DockStyle.Top;
-  errLabel.Font      := new System.Drawing.Font('Segoe UI', 9, System.Drawing.FontStyle.Bold);
-  errLabel.BackColor := System.Drawing.Color.FromArgb(230, 230, 230);
-  errLabel.Height    := 22;
-
+  // ── 오류 목록 탭 ──────────────────────────────────────
   lvErrors               := new System.Windows.Forms.ListView();
   lvErrors.Dock          := System.Windows.Forms.DockStyle.Fill;
   lvErrors.View          := System.Windows.Forms.View.Details;
@@ -2187,10 +2364,36 @@ begin
   lvErrors.Columns.Add(colLine);
   lvErrors.Columns.Add(colFile);
 
-  errPanel      := new System.Windows.Forms.Panel();
-  errPanel.Dock := System.Windows.Forms.DockStyle.Fill;
-  errPanel.Controls.Add(lvErrors);
-  errPanel.Controls.Add(errLabel);
+  // ── 출력 탭 ─────────────────────────────────────────
+  txtOutput                := new System.Windows.Forms.RichTextBox();
+  txtOutput.Dock           := System.Windows.Forms.DockStyle.Fill;
+  txtOutput.ReadOnly       := true;
+  txtOutput.BackColor      := System.Drawing.Color.FromArgb(30, 30, 30);
+  txtOutput.ForeColor      := System.Drawing.Color.FromArgb(220, 220, 220);
+  txtOutput.Font           := new System.Drawing.Font('Consolas', 9.5);
+  txtOutput.BorderStyle    := System.Windows.Forms.BorderStyle.None;
+  txtOutput.WordWrap       := true;
+  txtOutput.HideSelection  := false;
+  var outMenu   := new System.Windows.Forms.ContextMenuStrip();
+  var outCopy   := new System.Windows.Forms.ToolStripMenuItem('복사(&C)' + #9 + 'Ctrl+C');
+  var outClear  := new System.Windows.Forms.ToolStripMenuItem('지우기(&L)');
+  outCopy.Click  += OnOutputCopy;
+  outClear.Click += OnOutputClear;
+  outMenu.Items.Add(outCopy);
+  outMenu.Items.Add(outClear);
+  txtOutput.ContextMenuStrip := outMenu;
+
+  bottomTabs      := new System.Windows.Forms.TabControl();
+  bottomTabs.Dock := System.Windows.Forms.DockStyle.Fill;
+  bottomTabs.Font := new System.Drawing.Font('Segoe UI', 9);
+
+  tabOutput := new System.Windows.Forms.TabPage('출력');
+  tabOutput.Controls.Add(txtOutput);
+  tabErrors := new System.Windows.Forms.TabPage('오류 목록');
+  tabErrors.Controls.Add(lvErrors);
+
+  bottomTabs.TabPages.Add(tabOutput);
+  bottomTabs.TabPages.Add(tabErrors);
 
   splitRight                  := new System.Windows.Forms.SplitContainer();
   splitRight.Dock             := System.Windows.Forms.DockStyle.Fill;
@@ -2215,7 +2418,7 @@ begin
   splitMain.Orientation      := System.Windows.Forms.Orientation.Horizontal;
   splitMain.SplitterDistance := 750;
   splitMain.Panel1.Controls.Add(splitDesign);
-  splitMain.Panel2.Controls.Add(errPanel);
+  splitMain.Panel2.Controls.Add(bottomTabs);
 
   mainPanel      := new System.Windows.Forms.Panel();
   mainPanel.Dock := System.Windows.Forms.DockStyle.Fill;
@@ -2300,7 +2503,7 @@ end;
 procedure Form1.OnAbout(sender: System.Object; e: System.EventArgs);
 begin
   System.Windows.Forms.MessageBox.Show(
-    'PascalABC-WPF-Designer Ver 2.0.2' + System.Environment.NewLine + System.Environment.NewLine +
+    'PascalABC-WPF-Designer Ver 2.1.0' + System.Environment.NewLine + System.Environment.NewLine +
     '■ VS 호환 XAML 지원' + System.Environment.NewLine +
     '  · x:Class, x:Name, 이벤트 속성 100% 호환' + System.Environment.NewLine +
     '  · mc:Ignorable, d:DesignHeight/Width 지원' + System.Environment.NewLine + System.Environment.NewLine +

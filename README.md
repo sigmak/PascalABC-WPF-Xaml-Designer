@@ -1,5 +1,21 @@
 # PascalABC-WPF-Xaml-Designer
 PascalABC.net 개발툴을 활용한 pascal wpf xaml Designer
+사용된 개발툴 및 컨트롤 들
+1. PascalABC.net              : https://pascalabc.net/en/
+2. WpfDesigner                : https://www.nuget.org/api/v2/package/ICSharpCode.WpfDesigner/8.1.56
+3. AvalonEdit                 : https://www.nuget.org/packages/AvalonEdit/6.3.1.120
+4. DockPanelSuite             : https://www.nuget.org/api/v2/package/DockPanelSuite/3.1.0
+5. DockPanelSuite.ThemeVS2015 : https://www.nuget.org/packages/DockPanelSuite.ThemeVS2015/
+
+
+[Ver 2.2.2]
+* DockContents.pas 를 추가해서
+
+TToolboxDock, TSolutionExplorerDock, TPropertyGridDock, TOutputDock,TErrorListDock,TMainDocumentDock 로 분리해서 적용
+
+<img src='https://github.com/sigmak/PascalABC-WPF-Xaml-Designer/blob/main/screenshot/ver-2-2-2.png' />
+
+
 
 [Ver 2.2.1]
 * 디자인에서 버튼을 더블 클릭하면 pascal 코드 에디터 창에 버튼 이벤트 소스코드에 커서가 위치되도록 수정.

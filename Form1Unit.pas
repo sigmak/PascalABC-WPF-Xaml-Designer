@@ -1,7 +1,7 @@
 ﻿unit Form1Unit;
 
 // =============================================================================
-// Form1.pas  —  PascalABC-WPF-Designer Ver 2.2.0  메인 폼
+// Form1.pas  —  PascalABC-WPF-Designer Ver 2.2.1  메인 폼
 //
 // 외부 유닛 의존성:
 //   Models/   ProjectOptions, ControlInfo
@@ -203,7 +203,10 @@ type
 
     // ── 이벤트 핸들러 삽입 ──────────────────────────────────────────────────
     procedure AddEventHandlerToXaml(controlName, eventName, handlerName: string);
-    procedure AddEventHandlerToCode(handlerName, eventType: string);
+    // ★ 변경: procedure → function. 반환값은 코드 에디터에서 커서를 위치시킬 CaretOffset.
+    function  AddEventHandlerToCode(handlerName, eventType: string): integer;
+    // ★ 추가: Dispatcher.BeginInvoke로 호출할 캐럿 이동 헬퍼 (메서드 참조 방식 — 람다 호환성 문제 회피)
+    procedure JumpCodeEditorCaretTo(offset: integer);
 
     // ── 새 프로젝트 다이얼로그 / 생성 ──────────────────────────────────────
     function  ShowNewProjectDialog(var projType: TProjectType;
@@ -309,7 +312,7 @@ end;
 constructor Form1.Create;
 begin
   inherited Create;
-  Self.Text   := 'PascalABC-WPF-Designer Ver 2.2.0';
+  Self.Text   := 'PascalABC-WPF-Designer Ver 2.2.1';
   Self.Width  := 1600;
   Self.Height := 950;
 
@@ -1688,16 +1691,49 @@ end;
 // =============================================================================
 // 이벤트 핸들러 삽입
 // =============================================================================
-procedure Form1.AddEventHandlerToCode(handlerName: string; eventType: string);
+// ★ 변경: function으로 변경. 반환값은 fCodeEditor에서 커서를 위치시킬 CaretOffset.
+//   - 핸들러가 이미 존재하면: 그 procedure의 'begin' 바로 다음 줄 시작 오프셋 반환
+//   - 새로 생성하면: 새로 삽입된 handler의 'begin' 바로 다음 줄(TODO 줄) 시작 오프셋 반환
+//   - 실패 시 -1 반환
+function Form1.AddEventHandlerToCode(handlerName: string; eventType: string): integer;
 var
-  code, marker, indent: string;
+  code, marker, indent, paramT: string;
+  existingIdx, beginIdx: integer;
+  doc: ICSharpCode.AvalonEdit.Document.TextDocument;
+
+  // charIdx가 위치한 줄의 "다음 줄" 시작 오프셋을 구한다.
+  // AvalonEdit Document의 줄 경계 API를 사용하므로 \r\n / \n 차이에 영향받지 않는다.
+  function OffsetAfterLineOf(charIdx: integer): integer;
+  var
+    line: ICSharpCode.AvalonEdit.Document.DocumentLine;
+  begin
+    line := doc.GetLineByOffset(charIdx);
+    if line.NextLine <> nil then
+      Result := line.NextLine.Offset
+    else
+      Result := doc.TextLength;
+  end;
+
 begin
+  Result := -1;
   code   := fCodeEditor.Text;
   marker := '// ── 이벤트 핸들러 구현 ──────────────────────────────────';
 
-  if code.Contains('procedure ' + fClassName + '.' + handlerName) then exit;
+  // ── 케이스 1: 이미 존재하는 핸들러 → 그 begin 다음 줄로 이동 ──────────────
+  existingIdx := code.IndexOf('procedure ' + fClassName + '.' + handlerName);
+  if existingIdx >= 0 then
+  begin
+    doc      := fCodeEditor.Document;   // 텍스트 변경 전이므로 현재 Document 그대로 사용
+    beginIdx := code.IndexOf('begin', existingIdx);
+    if beginIdx >= 0 then
+      Result := OffsetAfterLineOf(beginIdx)
+    else
+      Result := existingIdx;
+    exit;
+  end;
 
-  var paramT := (if eventType <> '' then eventType else 'System.Windows.RoutedEventArgs');
+  // ── 케이스 2: 새로 생성 ────────────────────────────────────────────────
+  paramT := (if eventType <> '' then eventType else 'System.Windows.RoutedEventArgs');
 
   indent := '';
   var ii := 0;
@@ -1714,17 +1750,38 @@ begin
     '(sender: System.Object; e: ' + paramT + ');');
   handler.AppendLine('begin');
   if fOptions.GenerateComments then
-    handler.AppendLine(indent + '// TODO: ' + handlerName);
+    handler.AppendLine(indent + '// TODO: ' + handlerName)
+  else
+    handler.AppendLine(indent);
   handler.AppendLine('end;');
   handler.AppendLine('');
 
-  if code.Contains(marker) then
-    code := code.Replace(marker,
-      marker + System.Environment.NewLine + System.Environment.NewLine + handler.ToString())
-  else
-    code := code + System.Environment.NewLine + handler.ToString();
+  var handlerStr := handler.ToString();
+  var insertPos: integer;
 
-  fCodeEditor.Text := code;
+  if code.Contains(marker) then
+  begin
+    var insertText := marker + System.Environment.NewLine +
+                       System.Environment.NewLine + handlerStr;
+    insertPos := code.IndexOf(marker);
+    code := code.Replace(marker, insertText);
+    insertPos += Length(marker + System.Environment.NewLine + System.Environment.NewLine);
+  end
+  else
+  begin
+    insertPos := Length(code) + Length(System.Environment.NewLine);
+    code := code + System.Environment.NewLine + handlerStr;
+  end;
+
+  fCodeEditor.Text := code;          // 텍스트 갱신 → Document 새로 생성됨
+  doc := fCodeEditor.Document;       // 갱신된 Document 참조
+
+  // handlerStr 안에서 'begin'의 절대 위치 = insertPos + (handlerStr 내 'begin' 인덱스)
+  var beginRelIdx := handlerStr.IndexOf('begin');
+  if beginRelIdx >= 0 then
+    Result := OffsetAfterLineOf(insertPos + beginRelIdx)
+  else
+    Result := insertPos;
 end;
 
 procedure Form1.AddEventHandlerToXaml(controlName, eventName, handlerName: string);
@@ -1739,6 +1796,21 @@ begin
   fXamlEditor.Text := xaml;
 end;
 
+// ★ 추가: Dispatcher.BeginInvoke로 호출되는 캐럿 이동 헬퍼.
+//   메서드 참조(System.Action<integer>) 방식으로 호출하므로 PascalABC.NET의
+//   익명 메서드/람다 문법 버전 차이에 영향받지 않는다.
+procedure Form1.JumpCodeEditorCaretTo(offset: integer);
+var loc: ICSharpCode.AvalonEdit.Document.TextLocation;
+begin
+  if fCodeEditor = nil then exit;
+  if (offset < 0) or (offset > fCodeEditor.Document.TextLength) then exit;
+  fCodeEditor.CaretOffset := offset;
+  loc := fCodeEditor.Document.GetLocation(offset);
+  fCodeEditor.ScrollTo(loc.Line, loc.Column);
+  fCodeEditor.Focus();
+  System.Windows.Input.Keyboard.Focus(fCodeEditor.TextArea);
+end;
+
 // =============================================================================
 // 디자이너 더블클릭
 // =============================================================================
@@ -1748,6 +1820,8 @@ var
   selectedItems : System.Collections.Generic.ICollection<ICSharpCode.WpfDesign.DesignItem>;
   item          : ICSharpCode.WpfDesign.DesignItem;
   controlName, controlType, eventName, handlerName: string;
+  caretOffset   : integer;
+  jumpAction    : System.Action<integer>;
 begin
   if fSurface.DesignContext = nil then exit;
   selectedItems := fSurface.DesignContext.Services.Selection.SelectedItems;
@@ -1775,14 +1849,20 @@ begin
   handlerName := (if controlName <> '' then controlName else controlType) + '_' + eventName;
 
   AddEventHandlerToXaml(controlName, eventName, handlerName);
-  AddEventHandlerToCode(handlerName, GetEventParamType(controlType, eventName));
-  tabControl.SelectedTab := tabCode;
+  caretOffset := AddEventHandlerToCode(handlerName, GetEventParamType(controlType, eventName));
 
-  System.Windows.Forms.MessageBox.Show(
-    '이벤트 핸들러 생성: ' + handlerName + #13#10 + '코드 탭에서 구현하세요.',
-    '이벤트 연결',
-    System.Windows.Forms.MessageBoxButtons.OK,
-    System.Windows.Forms.MessageBoxIcon.Information);
+  tabControl.SelectedTab := tabCode;
+  AppendOutput('이벤트 핸들러로 이동: ' + handlerName, false);
+
+  // ElementHost 안 WPF 컨트롤이 탭 전환 직후 바로 포커스를 못 받는 경우가 있어
+  // Dispatcher에 한 틱 미뤄서 처리 (VS의 더블클릭 → 코드 점프와 동일한 체감)
+  if caretOffset >= 0 then
+  begin
+    jumpAction := JumpCodeEditorCaretTo;
+    fCodeEditor.Dispatcher.BeginInvoke(
+      System.Windows.Threading.DispatcherPriority.Background,
+      jumpAction, caretOffset);
+  end;
 end;
 
 // =============================================================================
@@ -2836,7 +2916,7 @@ begin KillPreviousBuildProcesses(); end;
 procedure Form1.OnAbout(sender: System.Object; e: System.EventArgs);
 begin
   System.Windows.Forms.MessageBox.Show(
-    'PascalABC-WPF-Designer Ver 2.2.0' + System.Environment.NewLine + System.Environment.NewLine +
+    'PascalABC-WPF-Designer Ver 2.2.1' + System.Environment.NewLine + System.Environment.NewLine +
     '■ 리팩토링 구조' + System.Environment.NewLine +
     '  Models/  : ProjectOptions, ControlInfo' + System.Environment.NewLine +
     '  Events/  : WpfEventMap' + System.Environment.NewLine +

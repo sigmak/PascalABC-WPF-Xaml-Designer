@@ -2,7 +2,15 @@
 <Project FileVersion="2" Name="PascalABC-WPF-Xaml-Designer" MainFile="PascalABC-WPF-Xaml-Designer.pas" OutputFileName="PascalABC-WPF-Xaml-Designer.exe" OutputDirectory="" ProjectType="WindowsApp" IncludeDebugInfo="True" GenerateXMLDoc="False" CommandLineArguments="" AppIcon="" DeleteEXE="True" DeletePDB="True" Product="" Company="" Trademark="" Copyright="" Title="" Description="" MajorVersion="0" MinorVersion="0" BuildVersion="0" RevisionVersion="0">
   <Items>
     <Item Type="SourceFile" Name="PascalABC-WPF-Xaml-Designer.pas" Path="PascalABC-WPF-Xaml-Designer.pas" />
-    <Item Type="SourceFile" Name="Unit1.pas" Path="Unit1.pas" />
+    <Item Type="SourceFile" Name="Form1Unit.pas" Path="Form1Unit.pas" />
+    <Item Type="SourceFile" Name="PascalCodeGenerator.pas" Path="PascalCodeGenerator.pas" />
+    <Item Type="SourceFile" Name="XamlParser.pas" Path="XamlParser.pas" />
+    <Item Type="SourceFile" Name="XamlPreprocessor.pas" Path="XamlPreprocessor.pas" />
+    <Item Type="SourceFile" Name="PascalFolding.pas" Path="PascalFolding.pas" />
+    <Item Type="SourceFile" Name="PascalHighlighting.pas" Path="PascalHighlighting.pas" />
+    <Item Type="SourceFile" Name="WpfEventMap.pas" Path="WpfEventMap.pas" />
+    <Item Type="SourceFile" Name="ControlInfo.pas" Path="ControlInfo.pas" />
+    <Item Type="SourceFile" Name="ProjectOptions.pas" Path="ProjectOptions.pas" />
     <Item Type="Reference" AssemblyName="System" FullAssemblyName="System.dll" />
     <Item Type="Reference" AssemblyName="System.Windows.Forms" FullAssemblyName="System.Windows.Forms.dll" />
     <Item Type="Reference" AssemblyName="System.Drawing" FullAssemblyName="System.Drawing.dll" />

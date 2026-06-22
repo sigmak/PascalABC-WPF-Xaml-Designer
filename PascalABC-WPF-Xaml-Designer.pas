@@ -1,4 +1,4 @@
-﻿uses Unit1;
+﻿uses Form1Unit;
 
 begin
   System.Windows.Forms.Application.EnableVisualStyles();

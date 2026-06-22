@@ -1,6 +1,13 @@
 # PascalABC-WPF-Xaml-Designer
 PascalABC.net 개발툴을 활용한 pascal wpf xaml Designer
 
+[Ver 2.2.1]
+* 디자인에서 버튼을 더블 클릭하면 pascal 코드 에디터 창에 버튼 이벤트 소스코드에 커서가 위치되도록 수정.
+
+<img src='https://github.com/sigmak/PascalABC-WPF-Xaml-Designer/blob/main/screenshot/ver-2-2-1.png' />
+<img src='https://github.com/sigmak/PascalABC-WPF-Xaml-Designer/blob/main/screenshot/ver-2-2-1B.png' />
+  
+
 [Ver 2.2.0]
 
 * 프로젝트 파일 explorer 추가

@@ -1,19 +1,22 @@
 ﻿unit Form1Unit;
 
 // =============================================================================
-// Form1.pas  —  PascalABC-WPF-Designer Ver 2.2.1  메인 폼
+// Form1.pas  —  PascalABC-WPF-Designer Ver 2.2.2  메인 폼
 //
 // 외부 유닛 의존성:
 //   Models/   ProjectOptions, ControlInfo
 //   Events/   WpfEventMap
 //   Editor/   PascalHighlighting, PascalFolding
 //   CodeGen/  XamlParser, XamlPreprocessor, PascalCodeGenerator
+//   Docking/  DockContents
 // =============================================================================
 
 {$reference ICSharpCode.WpfDesign.dll}
 {$reference ICSharpCode.WpfDesign.Designer.dll}
 {$reference ICSharpCode.WpfDesign.XamlDom.dll}
 {$reference AvalonEdit.6.3.1.120\lib\net462\ICSharpCode.AvalonEdit.dll}
+{$reference dockpanelsuite.3.1.0\lib\net40\WeifenLuo.WinFormsUI.Docking.dll}
+{$reference dockpanelsuite.themevs2015.3.1.1\lib\net40\WeifenLuo.WinFormsUI.Docking.ThemeVS2015.dll}
 {$reference PresentationFramework.dll}
 {$reference PresentationCore.dll}
 {$reference WindowsBase.dll}
@@ -24,6 +27,7 @@ uses
   System.Windows.Forms,
   System.Collections.Generic,
   ICSharpCode.WpfDesign,
+  WeifenLuo.WinFormsUI.Docking,
   // ── 분리된 유닛 ──────────────────────────────────────────────────────────
   ProjectOptions,        // TProjectOptions, TProjectType
   ControlInfo,           // TControlInfo
@@ -32,7 +36,9 @@ uses
   PascalFolding,         // TPascalFoldingStrategy
   XamlParser,            // ParseXClassInfo, ParseControlsFromXaml, StripEventAttributesForRuntime
   XamlPreprocessor,      // PreprocessXaml, StripCustomNamespaces, PrepareXamlForBuild
-  PascalCodeGenerator;   // TPascalCodeGenerator
+  PascalCodeGenerator,   // TPascalCodeGenerator
+  DockContents;          // TToolboxDock, TSolutionExplorerDock, TPropertyGridDock,
+                          // TOutputDock, TErrorListDock, TMainDocumentDock
 
 // =============================================================================
 // Form1
@@ -82,16 +88,17 @@ type
 
     splitDesignXaml : System.Windows.Forms.SplitContainer;
 
-    bottomTabs   : System.Windows.Forms.TabControl;
-    tabErrors    : System.Windows.Forms.TabPage;
-    tabOutput    : System.Windows.Forms.TabPage;
+    // ── DockPanelSuite ──────────────────────────────────────────────────────
+    dockPanel        : WeifenLuo.WinFormsUI.Docking.DockPanel;
+    dockToolbox      : TToolboxDock;
+    dockExplorer     : TSolutionExplorerDock;
+    dockProperties   : TPropertyGridDock;
+    dockOutput       : TOutputDock;
+    dockErrors       : TErrorListDock;
+    dockMain         : TMainDocumentDock;
+
     lvErrors     : System.Windows.Forms.ListView;
     txtOutput    : System.Windows.Forms.RichTextBox;
-
-    splitMain   : System.Windows.Forms.SplitContainer;
-    splitDesign : System.Windows.Forms.SplitContainer;
-    splitRight  : System.Windows.Forms.SplitContainer;
-    splitExplorerProps : System.Windows.Forms.SplitContainer;
 
     trvSolution : System.Windows.Forms.TreeView;
 
@@ -99,7 +106,7 @@ type
     menuItemHighlight        : System.Windows.Forms.ToolStripMenuItem;
     menuItemWordWrap         : System.Windows.Forms.ToolStripMenuItem;
     menuItemFolding          : System.Windows.Forms.ToolStripMenuItem;
-    menuItemSplitOrientation : System.Windows.Forms.ToolStripMenuItem;
+    menuItemResetLayout      : System.Windows.Forms.ToolStripMenuItem;
 
     // XAML 폴딩
     fFoldingManager  : ICSharpCode.AvalonEdit.Folding.FoldingManager;
@@ -123,6 +130,7 @@ type
     procedure BuildMenu;
     procedure BuildToolbox;
     procedure BuildLayout;
+    procedure BuildDockLayout;
     procedure ConnectEvents;
 
     // ── 툴박스 / 디자이너 이벤트 ────────────────────────────────────────────
@@ -151,7 +159,7 @@ type
     procedure OnToggleHighlight(sender: System.Object; e: System.EventArgs);
     procedure OnToggleWordWrap(sender: System.Object; e: System.EventArgs);
     procedure OnToggleFolding(sender: System.Object; e: System.EventArgs);
-    procedure OnToggleSplitOrientation(sender: System.Object; e: System.EventArgs);
+    procedure OnResetLayout(sender: System.Object; e: System.EventArgs);
 
     // ── 빌드 / 실행 ─────────────────────────────────────────────────────────
     procedure OnBuild(sender: System.Object; e: System.EventArgs);
@@ -251,24 +259,6 @@ begin
   fCodeGen := new TPascalCodeGenerator(fOptions, fXamlFileName, fPasFileName);
 end;
 
-{
-function Form1.GenerateCode: string;
-var
-  ns, cls: string;
-begin
-  RebuildCodeGen();
-  case fProjectType of
-    ptWpfApp:
-      Result := fCodeGen.GenerateWpfAppCode(fXamlEditor.Text, ns, cls);
-    ptWpfControlLibrary:
-      Result := fCodeGen.GenerateControlLibCode(fXamlEditor.Text, ns, cls);
-  else
-    Result := '';
-  end;
-  fNamespace := ns;
-  fClassName := cls;
-end;
-}
 function Form1.GenerateCode: string;
 var
   ns, cls: string;
@@ -312,7 +302,7 @@ end;
 constructor Form1.Create;
 begin
   inherited Create;
-  Self.Text   := 'PascalABC-WPF-Designer Ver 2.2.1';
+  Self.Text   := 'PascalABC-WPF-Designer Ver 2.2.2';
   Self.Width  := 1600;
   Self.Height := 950;
 
@@ -1303,7 +1293,8 @@ begin
 
   KillPreviousBuildProcesses();
   ClearOutput();
-  bottomTabs.SelectedTab := tabOutput;
+  dockOutput.Show();
+  dockOutput.Activate();
   AppendOutput('====== 빌드 시작: ' + System.DateTime.Now.ToString('HH:mm:ss') + ' ======', false);
 
   ParseXClassInfo(fXamlEditor.Text, fNamespace, fClassName);
@@ -1447,7 +1438,8 @@ begin
   else
   begin
     ShowBuildErrors(txtOutput.Text);
-    bottomTabs.SelectedTab := tabErrors;
+    dockErrors.Show();
+    dockErrors.Activate();
   end;
 
   fRunAfterBuild := false;
@@ -2122,21 +2114,26 @@ begin
   if menuItemFolding.Checked then EnableFolding() else DisableFolding();
 end;
 
-procedure Form1.OnToggleSplitOrientation(sender: System.Object; e: System.EventArgs);
+// ★ 변경: SplitContainer 분할 방향 토글 → DockPanelSuite 레이아웃 초기화로 대체.
+//   왼쪽/오른쪽/하단 패널을 모두 Auto-Hide 해제하고 기본 위치로 되돌려
+//   "각 DockPanel을 최소화하면 중앙이 확장된다"는 동작을 언제든 원상복구할 수 있게 한다.
+procedure Form1.OnResetLayout(sender: System.Object; e: System.EventArgs);
 begin
-  if splitDesignXaml = nil then exit;
-  if splitDesignXaml.Orientation = System.Windows.Forms.Orientation.Vertical then
-  begin
-    splitDesignXaml.Orientation      := System.Windows.Forms.Orientation.Horizontal;
-    splitDesignXaml.SplitterDistance  := splitDesignXaml.Height div 2;
-    menuItemSplitOrientation.Text     := '분할 방향: 좌우(&O)';
-  end
-  else
-  begin
-    splitDesignXaml.Orientation      := System.Windows.Forms.Orientation.Vertical;
-    splitDesignXaml.SplitterDistance  := splitDesignXaml.Width div 2;
-    menuItemSplitOrientation.Text     := '분할 방향: 상하(&O)';
-  end;
+  if dockPanel = nil then exit;
+  dockToolbox.DockState    := DockState.DockLeft;
+  dockExplorer.DockState   := DockState.DockRight;
+  dockProperties.DockState := DockState.DockRight;
+  dockOutput.DockState     := DockState.DockBottom;
+  dockErrors.DockState     := DockState.DockBottom;
+
+  // 오른쪽: 탐색기 위 / 속성 아래로 다시 쌓기
+  dockProperties.Show(dockExplorer.Pane, DockAlignment.Bottom, 0.5);
+  // 하단: 출력 / 오류 목록을 같은 탭 그룹으로
+  dockErrors.Show(dockOutput.Pane, nil);
+
+  dockToolbox.Width  := 220;
+  dockExplorer.Width := 260;
+  dockOutput.Height  := 200;
 end;
 
 // =============================================================================
@@ -2393,6 +2390,8 @@ var
   fileMenu, viewMenu, buildMenu, projMenu, helpMenu: System.Windows.Forms.ToolStripMenuItem;
   newItem, openItem, saveItem, applyItem, syncItem  : System.Windows.Forms.ToolStripMenuItem;
   buildItem, runItem, aboutItem, projOptItem         : System.Windows.Forms.ToolStripMenuItem;
+  toolboxViewItem, explorerViewItem, propsViewItem   : System.Windows.Forms.ToolStripMenuItem;
+  outputViewItem, errorsViewItem                     : System.Windows.Forms.ToolStripMenuItem;
 begin
   menuStrip := new System.Windows.Forms.MenuStrip();
 
@@ -2420,13 +2419,60 @@ begin
   syncItem  := new System.Windows.Forms.ToolStripMenuItem('XAML 동기화(&X)');
   applyItem.Click += OnApplyXamlMenu;
   syncItem.Click  += OnSyncXamlMenu;
+  
   viewMenu.DropDownItems.Add(applyItem);
   viewMenu.DropDownItems.Add(syncItem);
   viewMenu.DropDownItems.Add(new System.Windows.Forms.ToolStripSeparator());
 
-  menuItemSplitOrientation       := new System.Windows.Forms.ToolStripMenuItem('분할 방향: 상하(&O)');
-  menuItemSplitOrientation.Click += OnToggleSplitOrientation;
-  viewMenu.DropDownItems.Add(menuItemSplitOrientation);
+  var splitOrientItem := new System.Windows.Forms.ToolStripMenuItem('디자인/XAML 분할 전환(&Z)');
+  splitOrientItem.Click += (sender, e) ->
+    begin
+      if splitDesignXaml = nil then exit;
+      if splitDesignXaml.Orientation = System.Windows.Forms.Orientation.Vertical then
+        splitDesignXaml.Orientation := System.Windows.Forms.Orientation.Horizontal
+      else
+        splitDesignXaml.Orientation := System.Windows.Forms.Orientation.Vertical;
+    end;
+  viewMenu.DropDownItems.Add(splitOrientItem);
+  viewMenu.DropDownItems.Add(new System.Windows.Forms.ToolStripSeparator());    
+
+  // ★ 변경: 분할 방향 토글 → 도킹 패널 표시/숨김 메뉴로 교체
+  toolboxViewItem        := new System.Windows.Forms.ToolStripMenuItem('도구 상자(&T)');
+  toolboxViewItem.Click  += (sender, e) -> //procedure(sender: System.Object; e: System.EventArgs)
+    begin
+      if dockToolbox <> nil then begin dockToolbox.Show(); dockToolbox.Activate(); end;
+    end;
+
+  explorerViewItem       := new System.Windows.Forms.ToolStripMenuItem('솔루션 탐색기(&E)');
+  explorerViewItem.Click += (sender, e) -> //procedure(sender: System.Object; e: System.EventArgs)
+    begin
+      if dockExplorer <> nil then begin dockExplorer.Show(); dockExplorer.Activate(); end;
+    end;
+  propsViewItem          := new System.Windows.Forms.ToolStripMenuItem('속성(&P)');
+  propsViewItem.Click    += (sender, e) -> //procedure(sender: System.Object; e: System.EventArgs)
+    begin
+      if dockProperties <> nil then begin dockProperties.Show(); dockProperties.Activate(); end;
+    end;
+  outputViewItem         := new System.Windows.Forms.ToolStripMenuItem('출력(&O)');
+  outputViewItem.Click   += (sender, e) -> //procedure(sender: System.Object; e: System.EventArgs)
+    begin
+      if dockOutput <> nil then begin dockOutput.Show(); dockOutput.Activate(); end;
+    end;
+  errorsViewItem         := new System.Windows.Forms.ToolStripMenuItem('오류 목록(&R)');
+  errorsViewItem.Click   += (sender, e) -> //procedure(sender: System.Object; e: System.EventArgs)
+    begin
+      if dockErrors <> nil then begin dockErrors.Show(); dockErrors.Activate(); end;
+    end;
+  viewMenu.DropDownItems.Add(toolboxViewItem);
+  viewMenu.DropDownItems.Add(explorerViewItem);
+  viewMenu.DropDownItems.Add(propsViewItem);
+  viewMenu.DropDownItems.Add(outputViewItem);
+  viewMenu.DropDownItems.Add(errorsViewItem);
+  viewMenu.DropDownItems.Add(new System.Windows.Forms.ToolStripSeparator());
+
+  menuItemResetLayout       := new System.Windows.Forms.ToolStripMenuItem('레이아웃 초기화(&L)');
+  menuItemResetLayout.Click += OnResetLayout;
+  viewMenu.DropDownItems.Add(menuItemResetLayout);
   viewMenu.DropDownItems.Add(new System.Windows.Forms.ToolStripSeparator());
 
   menuItemLineNum              := new System.Windows.Forms.ToolStripMenuItem('라인 번호(&L)');
@@ -2629,25 +2675,41 @@ begin
 end;
 
 // =============================================================================
-// 레이아웃 빌드
+// 레이아웃 빌드 (DockPanelSuite 기반)
 // =============================================================================
+// ★ 변경: 기존 splitMain/splitDesign/splitRight/splitExplorerProps (SplitContainer 4개)를
+//   전부 제거하고 DockPanelSuite의 DockPanel + 6개 DockContent로 재구성한다.
+//
+//   - hostRight(속성), trvSolution(솔루션 탐색기), txtOutput(출력), lvErrors(오류 목록)는
+//     기존과 동일하게 생성하되, SplitContainer.Panel.Controls.Add(...) 대신
+//     각각의 DockContent 생성자에 그대로 전달한다.
+//   - hostDesign / hostXaml / hostCode / tabControl(디자인+XAML, 코드 탭)은
+//     splitDesignXaml에 묶인 그대로 두고, 그 tabControl 전체를
+//     TMainDocumentDock(중앙 고정 문서 영역)에 넣는다.
+//   - 각 DockContent를 Hide()(Auto-Hide) 시키면 DockPanelSuite가 자동으로
+//     중앙 Document 영역(tabControl)을 확장해준다 — SplitContainer로는
+//     불가능했던 부분.
 procedure Form1.BuildLayout;
+begin
+  // 내부적으로 실제 컨트롤들을 만들고 DockPanelSuite로 배치한다.
+  BuildDockLayout();
+end;
+
+procedure Form1.BuildDockLayout;
 var
-  mainPanel, toolboxPanel, propPanel, explorerPanel: System.Windows.Forms.Panel;
-  explorerLabel : System.Windows.Forms.Label;
   editorGrid    : System.Windows.Controls.Grid;
   editorRow0, editorRow1 : System.Windows.Controls.RowDefinition;
   applyBtn      : System.Windows.Controls.Button;
   colMsg, colLine, colFile: System.Windows.Forms.ColumnHeader;
+  mainPanel     : System.Windows.Forms.Panel;
 begin
+  // ── 속성 그리드 (WPF PropertyGridView → ElementHost) ───────────────────
   fPropView       := new ICSharpCode.WpfDesign.Designer.PropertyGrid.PropertyGridView();
   hostRight       := new System.Windows.Forms.Integration.ElementHost();
   hostRight.Dock  := System.Windows.Forms.DockStyle.Fill;
   hostRight.Child := fPropView;
-  propPanel       := new System.Windows.Forms.Panel();
-  propPanel.Dock  := System.Windows.Forms.DockStyle.Fill;
-  propPanel.Controls.Add(hostRight);
 
+  // ── 솔루션 탐색기 (TreeView) ─────────────────────────────────────────────
   trvSolution               := new System.Windows.Forms.TreeView();
   trvSolution.Dock          := System.Windows.Forms.DockStyle.Fill;
   trvSolution.Font          := new System.Drawing.Font('Segoe UI', 9);
@@ -2663,31 +2725,11 @@ begin
   ctxMenu.Items.Add(showInFolderItem);
   trvSolution.ContextMenuStrip := ctxMenu;
 
-  explorerLabel           := new System.Windows.Forms.Label();
-  explorerLabel.Text      := '솔루션 탐색기';
-  explorerLabel.Dock      := System.Windows.Forms.DockStyle.Top;
-  explorerLabel.Height    := 24;
-  explorerLabel.TextAlign := System.Drawing.ContentAlignment.MiddleLeft;
-  explorerLabel.Padding   := new System.Windows.Forms.Padding(6, 0, 0, 0);
-  explorerLabel.Font      := new System.Drawing.Font('Segoe UI', 9, System.Drawing.FontStyle.Bold);
-  explorerLabel.BackColor := System.Drawing.Color.FromArgb(240, 240, 240);
-
-  explorerPanel      := new System.Windows.Forms.Panel();
-  explorerPanel.Dock := System.Windows.Forms.DockStyle.Fill;
-  explorerPanel.Controls.Add(trvSolution);
-  explorerPanel.Controls.Add(explorerLabel);
-
-  splitExplorerProps                  := new System.Windows.Forms.SplitContainer();
-  splitExplorerProps.Dock             := System.Windows.Forms.DockStyle.Fill;
-  splitExplorerProps.Orientation      := System.Windows.Forms.Orientation.Horizontal;
-  splitExplorerProps.SplitterDistance := 320;
-  splitExplorerProps.Panel1.Controls.Add(explorerPanel);
-  splitExplorerProps.Panel2.Controls.Add(propPanel);
-
+  // ── 디자인 캔버스 (WPF DesignSurface → ElementHost) ─────────────────────
   hostDesign      := new System.Windows.Forms.Integration.ElementHost();
   hostDesign.Dock := System.Windows.Forms.DockStyle.Fill;
 
-  // XAML 에디터
+  // ── XAML 에디터 ─────────────────────────────────────────────────────────
   fXamlEditor                    := new ICSharpCode.AvalonEdit.TextEditor();
   fXamlEditor.FontFamily         := new System.Windows.Media.FontFamily(fOptions.FontName);
   fXamlEditor.FontSize           := fOptions.FontSize;
@@ -2718,7 +2760,7 @@ begin
   hostXaml.Dock  := System.Windows.Forms.DockStyle.Fill;
   hostXaml.Child := editorGrid;
 
-  // 코드 에디터
+  // ── 코드 에디터 ─────────────────────────────────────────────────────────
   fCodeEditor                    := new ICSharpCode.AvalonEdit.TextEditor();
   fCodeEditor.FontFamily         := new System.Windows.Media.FontFamily(fOptions.FontName);
   fCodeEditor.FontSize           := fOptions.FontSize;
@@ -2732,6 +2774,10 @@ begin
   hostCode.Dock  := System.Windows.Forms.DockStyle.Fill;
   hostCode.Child := fCodeEditor;
 
+  // ── 디자인 + XAML 탭 내부의 좌우 분할 (디자인 캔버스 / XAML 에디터) ──────
+  //   ※ 이 SplitContainer는 "메인 문서 영역 내부"의 분할이므로 유지한다.
+  //   DockPanelSuite로 교체 대상은 왼쪽 툴박스 / 오른쪽 탐색기·속성 / 하단
+  //   출력·오류 목록이며, 탭 내부 구조는 요청 범위가 아니다.
   splitDesignXaml                  := new System.Windows.Forms.SplitContainer();
   splitDesignXaml.Dock             := System.Windows.Forms.DockStyle.Fill;
   splitDesignXaml.Orientation      := System.Windows.Forms.Orientation.Vertical;
@@ -2739,6 +2785,7 @@ begin
   splitDesignXaml.Panel1.Controls.Add(hostDesign);
   splitDesignXaml.Panel2.Controls.Add(hostXaml);
 
+  // ── 중앙 문서 탭: 디자인+XAML / 코드 ────────────────────────────────────
   tabControl      := new System.Windows.Forms.TabControl();
   tabControl.Dock := System.Windows.Forms.DockStyle.Fill;
   tabControl.SelectedIndexChanged += OnTabChanged;
@@ -2750,7 +2797,7 @@ begin
   tabControl.TabPages.Add(tabDesignXaml);
   tabControl.TabPages.Add(tabCode);
 
-  // 오류 목록
+  // ── 오류 목록 (ListView) ─────────────────────────────────────────────────
   lvErrors               := new System.Windows.Forms.ListView();
   lvErrors.Dock          := System.Windows.Forms.DockStyle.Fill;
   lvErrors.View          := System.Windows.Forms.View.Details;
@@ -2775,7 +2822,7 @@ begin
   lvErrors.Columns.Add(colLine);
   lvErrors.Columns.Add(colFile);
 
-  // 출력 패널
+  // ── 출력 (RichTextBox) ───────────────────────────────────────────────────
   txtOutput                := new System.Windows.Forms.RichTextBox();
   txtOutput.Dock           := System.Windows.Forms.DockStyle.Fill;
   txtOutput.ReadOnly       := true;
@@ -2793,53 +2840,52 @@ begin
   outMenu.Items.Add(outCopy); outMenu.Items.Add(outClear);
   txtOutput.ContextMenuStrip := outMenu;
 
-  bottomTabs      := new System.Windows.Forms.TabControl();
-  bottomTabs.Dock := System.Windows.Forms.DockStyle.Fill;
-  bottomTabs.Font := new System.Drawing.Font('Segoe UI', 9);
-  tabOutput := new System.Windows.Forms.TabPage('출력');
-  tabOutput.Controls.Add(txtOutput);
-  tabErrors := new System.Windows.Forms.TabPage('오류 목록');
-  tabErrors.Controls.Add(lvErrors);
-  bottomTabs.TabPages.Add(tabOutput);
-  bottomTabs.TabPages.Add(tabErrors);
-
-  splitRight                  := new System.Windows.Forms.SplitContainer();
-  splitRight.Dock             := System.Windows.Forms.DockStyle.Fill;
-  splitRight.Orientation      := System.Windows.Forms.Orientation.Vertical;
-  splitRight.SplitterDistance := 1130;
-  splitRight.Panel1.Controls.Add(tabControl);
-  splitRight.Panel2.Controls.Add(splitExplorerProps);
-
-  toolboxPanel      := new System.Windows.Forms.Panel();
-  toolboxPanel.Dock := System.Windows.Forms.DockStyle.Fill;
-  toolboxPanel.Controls.Add(hostLeft);
-
-  splitDesign                  := new System.Windows.Forms.SplitContainer();
-  splitDesign.Dock             := System.Windows.Forms.DockStyle.Fill;
-  splitDesign.Orientation      := System.Windows.Forms.Orientation.Vertical;
-  splitDesign.SplitterDistance := 5;
-  splitDesign.Panel1.Controls.Add(toolboxPanel);
-  splitDesign.Panel2.Controls.Add(splitRight);
-
-  splitMain                  := new System.Windows.Forms.SplitContainer();
-  splitMain.Dock             := System.Windows.Forms.DockStyle.Fill;
-  splitMain.Orientation      := System.Windows.Forms.Orientation.Horizontal;
-  splitMain.SplitterDistance := 720;
-  splitMain.Panel1.Controls.Add(splitDesign);
-  splitMain.Panel2.Controls.Add(bottomTabs);
+  // ── DockPanelSuite 메인 패널 생성 ────────────────────────────────────────
+  dockPanel              := new WeifenLuo.WinFormsUI.Docking.DockPanel();
+  dockPanel.Dock         := System.Windows.Forms.DockStyle.Fill;
+  dockPanel.DocumentStyle := DocumentStyle.DockingWindow;  // Document 영역도 일반 도킹창처럼 동작
+  dockPanel.Theme        := new WeifenLuo.WinFormsUI.Docking.VS2015LightTheme();
 
   mainPanel      := new System.Windows.Forms.Panel();
   mainPanel.Dock := System.Windows.Forms.DockStyle.Fill;
-  mainPanel.Controls.Add(splitMain);
+  mainPanel.Controls.Add(dockPanel);
   Self.Controls.Add(mainPanel);
 
-  // XAML 폴딩 타이머
+  // ── 6개 DockContent 생성 및 배치 ─────────────────────────────────────────
+  // 1) 중앙 문서 영역: 항상 고정, 닫기/Auto-Hide 불가
+  dockMain := new TMainDocumentDock(tabControl);
+  dockMain.Show(dockPanel, DockState.Document);
+
+  // 2) 왼쪽: 도구 상자
+  dockToolbox := new TToolboxDock(hostLeft);
+  dockToolbox.Show(dockPanel, DockState.DockLeft);
+  dockToolbox.Width := 220;
+
+  // 3) 오른쪽 위: 솔루션 탐색기
+  dockExplorer := new TSolutionExplorerDock(trvSolution);
+  dockExplorer.Show(dockPanel, DockState.DockRight);
+  dockExplorer.Width := 260;
+
+  // 4) 오른쪽 아래: 속성 그리드 (탐색기 바로 아래에 쌓기)
+  dockProperties := new TPropertyGridDock(hostRight);
+  dockProperties.Show(dockExplorer.Pane, DockAlignment.Bottom, 0.5);
+
+  // 5) 하단: 출력
+  dockOutput := new TOutputDock(txtOutput);
+  dockOutput.Show(dockPanel, DockState.DockBottom);
+  dockOutput.Height := 200;
+
+  // 6) 하단: 오류 목록 (출력과 같은 탭 그룹으로 묶기)
+  dockErrors := new TErrorListDock(lvErrors);
+  dockErrors.Show(dockOutput.Pane, nil);
+
+  // ── XAML 폴딩 타이머 ─────────────────────────────────────────────────────
   fFoldingTimer          := new System.Windows.Threading.DispatcherTimer();
   fFoldingTimer.Interval := System.TimeSpan.FromMilliseconds(500);
   fFoldingTimer.Tick     += OnFoldingTimerTick;
   fXamlEditor.TextChanged += OnXamlTextChanged;
 
-  // 코드 폴딩 타이머
+  // ── 코드 폴딩 타이머 ─────────────────────────────────────────────────────
   fCodeFoldingTimer          := new System.Windows.Threading.DispatcherTimer();
   fCodeFoldingTimer.Interval := System.TimeSpan.FromMilliseconds(800);
   fCodeFoldingTimer.Tick     += OnCodeFoldingTimerTick;
@@ -2916,20 +2962,21 @@ begin KillPreviousBuildProcesses(); end;
 procedure Form1.OnAbout(sender: System.Object; e: System.EventArgs);
 begin
   System.Windows.Forms.MessageBox.Show(
-    'PascalABC-WPF-Designer Ver 2.2.1' + System.Environment.NewLine + System.Environment.NewLine +
+    'PascalABC-WPF-Designer Ver 2.2.2' + System.Environment.NewLine + System.Environment.NewLine +
     '■ 리팩토링 구조' + System.Environment.NewLine +
-    '  Models/  : ProjectOptions, ControlInfo' + System.Environment.NewLine +
-    '  Events/  : WpfEventMap' + System.Environment.NewLine +
-    '  Editor/  : PascalHighlighting, PascalFolding' + System.Environment.NewLine +
-    '  CodeGen/ : XamlParser, XamlPreprocessor, PascalCodeGenerator' + System.Environment.NewLine +
-    '  Form1.pas: UI + 이벤트 핸들러 + 빌드/실행' + System.Environment.NewLine + System.Environment.NewLine +
+    '  Models/   : ProjectOptions, ControlInfo' + System.Environment.NewLine +
+    '  Events/   : WpfEventMap' + System.Environment.NewLine +
+    '  Editor/   : PascalHighlighting, PascalFolding' + System.Environment.NewLine +
+    '  CodeGen/  : XamlParser, XamlPreprocessor, PascalCodeGenerator' + System.Environment.NewLine +
+    '  Docking/  : DockContents (DockPanelSuite)' + System.Environment.NewLine +
+    '  Form1.pas : UI + 이벤트 핸들러 + 빌드/실행' + System.Environment.NewLine + System.Environment.NewLine +
     '■ 주요 기능' + System.Environment.NewLine +
     '  · Pascal/PascalABC.NET 구문 강조 (XSHD)' + System.Environment.NewLine +
     '  · begin/end 블록 폴딩' + System.Environment.NewLine +
     '  · 프로젝트 옵션 (Alt+Enter)' + System.Environment.NewLine +
-    '  · 디자인 캔버스 + XAML + 코드 에디터 동시 표시' + System.Environment.NewLine + System.Environment.NewLine +
+    '  · DockPanelSuite 기반 도킹 레이아웃 (도구상자/탐색기/속성/출력/오류 최소화 가능)' + System.Environment.NewLine + System.Environment.NewLine +
     'Built with PascalABC.NET 3.11.1.3833' + System.Environment.NewLine +
-    'ICSharpCode.WpfDesign + AvalonEdit' + System.Environment.NewLine + System.Environment.NewLine +
+    'ICSharpCode.WpfDesign + AvalonEdit + DockPanelSuite' + System.Environment.NewLine + System.Environment.NewLine +
     'made by sigmak (dwfree74@gmail.com) with claude.ai',
     '정보',
     System.Windows.Forms.MessageBoxButtons.OK,

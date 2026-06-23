@@ -1,7 +1,7 @@
 ﻿unit Form1Unit;
 
 // =============================================================================
-// Form1.pas  —  PascalABC-WPF-Designer Ver 2.2.3  메인 폼
+// Form1.pas  —  PascalABC-WPF-Designer Ver 2.2.4  메인 폼
 //
 // 외부 유닛 의존성:
 //   Models/   ProjectOptions, ControlInfo
@@ -317,7 +317,7 @@ end;
 constructor Form1.Create;
 begin
   inherited Create;
-  Self.Text   := 'PascalABC-WPF-Designer Ver 2.2.3';
+  Self.Text   := 'PascalABC-WPF-Designer Ver 2.2.4';
   Self.Width  := 1600;
   Self.Height := 950;
 
@@ -493,20 +493,32 @@ procedure Form1.ShowProjectOptionsDialog;
     Result.BackColor := System.Drawing.Color.FromArgb(220, 220, 220);
   end;
 
-  function MakeSectionLabel(text: string): System.Windows.Forms.Label;
+  function MakeSectionLabel(text: string): System.Windows.Forms.Panel;
+  var
+    lbl: System.Windows.Forms.Label;
   begin
-    Result           := new System.Windows.Forms.Label();
-    Result.Text      := text;
-    Result.Font      := new System.Drawing.Font('Segoe UI', 10, System.Drawing.FontStyle.Bold);
-    Result.Height    := 26;
-    Result.ForeColor := System.Drawing.Color.FromArgb(60, 60, 140);
+    Result := new System.Windows.Forms.Panel();
+
+    Result.Height := 32;
+    Result.Dock   := System.Windows.Forms.DockStyle.Top;
+
+    lbl := new System.Windows.Forms.Label();
+    lbl.Text := text;
+    lbl.AutoSize := true;
+    lbl.Left := 0;
+    lbl.Top := 6;
+    lbl.Font := new System.Drawing.Font(
+                  'Segoe UI',10,
+                  System.Drawing.FontStyle.Bold);
+
+    Result.Controls.Add(lbl);
   end;
 
   function MakeLabel(text: string): System.Windows.Forms.Label;
   begin
     Result           := new System.Windows.Forms.Label();
     Result.Text      := text;
-    Result.Width     := 170;
+    Result.Width     := 160;
     Result.Height    := 22;
     Result.TextAlign := System.Drawing.ContentAlignment.MiddleLeft;
     Result.Font      := new System.Drawing.Font('Segoe UI', 9);
@@ -565,18 +577,22 @@ procedure Form1.ShowProjectOptionsDialog;
     Result.Font    := new System.Drawing.Font('Segoe UI', 9);
   end;
 
-  function MakeRow(lbl: System.Windows.Forms.Label;
-                   ctl: System.Windows.Forms.Control): System.Windows.Forms.Panel;
+function MakeRow(lbl: System.Windows.Forms.Label;
+                 ctl: System.Windows.Forms.Control): System.Windows.Forms.Panel;
   begin
     Result        := new System.Windows.Forms.Panel();
-    Result.Height := 28;
+    Result.Height := 34;
     Result.Dock   := System.Windows.Forms.DockStyle.Top;
-    lbl.Top := 3; lbl.Left := 0;
+
+    lbl.Top := 6;
+    lbl.Left := 0;
+
     lbl.Anchor := System.Windows.Forms.AnchorStyles.Left or
                   System.Windows.Forms.AnchorStyles.Top;
-    ctl.Top := 3; ctl.Left := 175;
-    // ComboBox/NumericUpDown 은 너비를 늘리면 보기 이상해지는 경우가 있어
-    // TextBox 계열만 패널 폭에 맞춰 오른쪽까지 자동으로 늘어나도록 한다.
+
+    ctl.Top := 3;
+    ctl.Left := 165;
+
     if (ctl is System.Windows.Forms.TextBox) then
       ctl.Anchor := System.Windows.Forms.AnchorStyles.Left or
                     System.Windows.Forms.AnchorStyles.Top or
@@ -584,6 +600,7 @@ procedure Form1.ShowProjectOptionsDialog;
     else
       ctl.Anchor := System.Windows.Forms.AnchorStyles.Left or
                     System.Windows.Forms.AnchorStyles.Top;
+
     Result.Controls.Add(lbl);
     Result.Controls.Add(ctl);
     Result.MinimumSize := new System.Drawing.Size(0, Result.Height);
@@ -592,12 +609,15 @@ procedure Form1.ShowProjectOptionsDialog;
   function MakeCkPanel(cb: System.Windows.Forms.CheckBox): System.Windows.Forms.Panel;
   begin
     Result        := new System.Windows.Forms.Panel();
-    Result.Height := 26;
+    Result.Height := 30;
     Result.Dock   := System.Windows.Forms.DockStyle.Top;
-    cb.Top  := 3;
-    cb.Left := 175;
+
+    cb.Top  := 5;
+    cb.Left := 165;
+
     cb.Anchor := System.Windows.Forms.AnchorStyles.Left or
-                System.Windows.Forms.AnchorStyles.Top;
+                 System.Windows.Forms.AnchorStyles.Top;
+
     Result.Controls.Add(cb);
   end;
 
@@ -640,10 +660,10 @@ var
     cboProjType := MakeCombo(
       ['WPF 애플리케이션 (.exe)', 'WPF 컨트롤 라이브러리 (.dll)'],
       (if fOptions.ProjectType = ptWpfApp then 'WPF 애플리케이션 (.exe)'
-       else 'WPF 컨트롤 라이브러리 (.dll)'), 280);
-    txtRootNs   := MakeTextBox(fOptions.RootNamespace, 280);
-    txtClassName := MakeTextBox(fOptions.ClassName, 280);
-    txtProjPath  := MakeTextBox(fProjectPath, 380);
+       else 'WPF 컨트롤 라이브러리 (.dll)'), 280); 
+    txtRootNs   := MakeTextBox(fOptions.RootNamespace, 280); 
+    txtClassName := MakeTextBox(fOptions.ClassName, 280); 
+    txtProjPath  := MakeTextBox(fProjectPath, 380); 
 
     fTxtProjName := txtProjName;
     fTxtRootNs   := txtRootNs;
@@ -685,7 +705,7 @@ var
     lbl.Top        := 3; lbl.Left := 0;
     lbl.Anchor     := System.Windows.Forms.AnchorStyles.Left or
                       System.Windows.Forms.AnchorStyles.Top;
-    fDlgTxtCompPath.Top    := 3; fDlgTxtCompPath.Left := 175;
+    fDlgTxtCompPath.Top    := 3; fDlgTxtCompPath.Left := 165;//175;
     fDlgTxtCompPath.Anchor := System.Windows.Forms.AnchorStyles.Left or
                               System.Windows.Forms.AnchorStyles.Top;
     fDlgRowComp.Controls.Add(lbl);
@@ -810,10 +830,10 @@ var
     lineNumLabel.Top       := 3; lineNumLabel.Left := 0;
     lineNumLabel.Anchor    := System.Windows.Forms.AnchorStyles.Left or
                               System.Windows.Forms.AnchorStyles.Top;
-    chkXamlLineNum.Top     := 3; chkXamlLineNum.Left := 175;
+    chkXamlLineNum.Top     := 3; chkXamlLineNum.Left := 165;//175;
     chkXamlLineNum.Anchor  := System.Windows.Forms.AnchorStyles.Left or
                               System.Windows.Forms.AnchorStyles.Top;
-    chkCodeLineNum.Top     := 3; chkCodeLineNum.Left := 290;
+    chkCodeLineNum.Top     := 3; chkCodeLineNum.Left := 165;//290;
     chkCodeLineNum.Anchor  := System.Windows.Forms.AnchorStyles.Left or
                               System.Windows.Forms.AnchorStyles.Top;
     lineNumPanel.Controls.Add(lineNumLabel);
@@ -919,19 +939,21 @@ var
 begin
   dlg        := new System.Windows.Forms.Form();
   dlg.Text   := '프로젝트 옵션 — ' + fNamespace;
-  dlg.Width  := 760;
-  dlg.Height := 580;
-  dlg.FormBorderStyle := System.Windows.Forms.FormBorderStyle.Sizable;
+  // ★ 수정: VS2022/Rider 스타일 — 고정 크기, 리사이즈 불가, 최대화/최소화 버튼 없음
+  dlg.Width  := 1620;//820;
+  dlg.Height := 800;//600;
+  dlg.FormBorderStyle := System.Windows.Forms.FormBorderStyle.FixedDialog;
   dlg.StartPosition   := System.Windows.Forms.FormStartPosition.CenterParent;
-  dlg.MinimumSize     := new System.Drawing.Size(620, 440);
+  dlg.MaximizeBox := false;
+  dlg.MinimizeBox := false;
   dlg.Font            := new System.Drawing.Font('Segoe UI', 9);
 
   fNavList             := new System.Windows.Forms.ListBox();
   fNavList.Dock        := System.Windows.Forms.DockStyle.Fill;
-  fNavList.Font        := new System.Drawing.Font('Segoe UI', 9.5);
+  fNavList.Font        := new System.Drawing.Font('Segoe UI', 9);
   fNavList.BorderStyle := System.Windows.Forms.BorderStyle.None;
-  fNavList.BackColor   := System.Drawing.Color.FromArgb(245, 245, 250);
-  fNavList.ItemHeight  := 28;
+  //fNavList.BackColor   := System.Drawing.Color.FromArgb(240, 240, 245);
+  fNavList.ItemHeight  := 30;
   fNavList.Items.Add('  🏷  프로젝트 정보');
   fNavList.Items.Add('  🔧  컴파일러');
   fNavList.Items.Add('  📦  출력 설정');
@@ -995,7 +1017,8 @@ begin
 
   splitDlg                  := new System.Windows.Forms.SplitContainer();
   splitDlg.Dock             := System.Windows.Forms.DockStyle.Fill;
-  splitDlg.SplitterDistance := 195;
+  // ★ 수정: 820px 창 기준 — 왼쪽 네비 210px, 나머지가 콘텐츠 영역
+  splitDlg.SplitterDistance := 5;//210;
   splitDlg.IsSplitterFixed  := true;
   splitDlg.Panel1.Controls.Add(fNavList);
   splitDlg.Panel2.Controls.Add(fContentPanel);
@@ -1003,37 +1026,53 @@ begin
   // 하단 버튼 바
   fDlgBtnBar           := new System.Windows.Forms.Panel();
   fDlgBtnBar.Dock      := System.Windows.Forms.DockStyle.Bottom;
-  fDlgBtnBar.Height    := 44;
+  fDlgBtnBar.Height    := 48;
   fDlgBtnBar.BackColor := System.Drawing.Color.FromArgb(245, 245, 250);
+  fDlgBtnBar.Padding   := new System.Windows.Forms.Padding(0, 1, 0, 0);
+
+  // 버튼 바 상단 구분선 (VS2022 스타일)
+  var btnBarSep        := new System.Windows.Forms.Panel();
+  btnBarSep.Height     := 1;
+  btnBarSep.Dock       := System.Windows.Forms.DockStyle.Top;
+  btnBarSep.BackColor  := System.Drawing.Color.FromArgb(210, 210, 215);
+  fDlgBtnBar.Controls.Add(btnBarSep);
 
   fDlgBtnOk              := new System.Windows.Forms.Button();
   fDlgBtnOk.Text         := '확인';
-  fDlgBtnOk.Width        := 80; fDlgBtnOk.Height := 28;
-  fDlgBtnOk.Top          := 8;
+  fDlgBtnOk.Width        := 88; 
+  fDlgBtnOk.Height       := 30;
+  fDlgBtnOk.Top          := 9;
   fDlgBtnOk.Anchor       := System.Windows.Forms.AnchorStyles.Right or
                         System.Windows.Forms.AnchorStyles.Top;
-  fDlgBtnOk.BackColor    := System.Drawing.Color.FromArgb(72, 60, 180);
+  fDlgBtnOk.BackColor    := System.Drawing.Color.FromArgb(0, 122, 204);
   fDlgBtnOk.ForeColor    := System.Drawing.Color.White;
   fDlgBtnOk.FlatStyle    := System.Windows.Forms.FlatStyle.Flat;
   fDlgBtnOk.FlatAppearance.BorderSize := 0;
+  fDlgBtnOk.Font         := new System.Drawing.Font('Segoe UI', 9, System.Drawing.FontStyle.Regular);
   fDlgBtnOk.DialogResult := System.Windows.Forms.DialogResult.OK;
 
   fDlgBtnCancel              := new System.Windows.Forms.Button();
   fDlgBtnCancel.Text         := '취소';
-  fDlgBtnCancel.Width        := 80; fDlgBtnCancel.Height := 28;
-  fDlgBtnCancel.Top          := 8;
+  fDlgBtnCancel.Width        := 88; 
+  fDlgBtnCancel.Height       := 30;
+  fDlgBtnCancel.Top          := 9;
   fDlgBtnCancel.Anchor       := System.Windows.Forms.AnchorStyles.Right or
                             System.Windows.Forms.AnchorStyles.Top;
   fDlgBtnCancel.FlatStyle    := System.Windows.Forms.FlatStyle.Flat;
+  fDlgBtnCancel.FlatAppearance.BorderColor := System.Drawing.Color.FromArgb(180, 180, 185);
+  fDlgBtnCancel.Font         := new System.Drawing.Font('Segoe UI', 9, System.Drawing.FontStyle.Regular);
   fDlgBtnCancel.DialogResult := System.Windows.Forms.DialogResult.Cancel;
 
   fDlgBtnApply        := new System.Windows.Forms.Button();
   fDlgBtnApply.Text   := '적용';
-  fDlgBtnApply.Width  := 80; fDlgBtnApply.Height := 28;
-  fDlgBtnApply.Top    := 8;
+  fDlgBtnApply.Width  := 88; 
+  fDlgBtnApply.Height := 30;
+  fDlgBtnApply.Top    := 9;
   fDlgBtnApply.Anchor := System.Windows.Forms.AnchorStyles.Right or
                      System.Windows.Forms.AnchorStyles.Top;
   fDlgBtnApply.FlatStyle := System.Windows.Forms.FlatStyle.Flat;
+  fDlgBtnApply.FlatAppearance.BorderColor := System.Drawing.Color.FromArgb(180, 180, 185);
+  fDlgBtnApply.Font   := new System.Drawing.Font('Segoe UI', 9, System.Drawing.FontStyle.Regular);
   fDlgBtnApply.Click  += OnApplyClick;
 
   fDlgBtnBar.Controls.Add(fDlgBtnApply);
@@ -1081,8 +1120,19 @@ end;
 
 procedure Form1.OnApplyClick(sender: System.Object; e: System.EventArgs);
 begin
-  if (fTxtProjName <> nil) and (fTxtRootNs <> nil) then
-    ShowProjectOptionsDialog();   // SaveOptions 는 ShowProjectOptionsDialog 내부에서 호출
+  // ★ 수정: ShowProjectOptionsDialog() 재호출 → 내부 SaveOptions 직접 호출로 변경
+  //   이전 코드는 적용 버튼을 누르면 새 옵션 창이 열리는 버그가 있었음
+  if (fTxtProjName = nil) or (fTxtRootNs = nil) then exit;
+
+  fOptions.ProjectName      := fTxtProjName.Text.Trim();
+  fOptions.RootNamespace    := fTxtRootNs.Text.Trim();
+  if fTxtClassName <> nil then
+    fOptions.ClassName      := fTxtClassName.Text.Trim();
+  if fTxtCompilerPath <> nil then
+    fOptions.CompilerPath   := fTxtCompilerPath.Text.Trim();
+
+  fProjectType := fOptions.ProjectType;
+  ApplyOptionsToEditors();
 end;
 
 // =============================================================================
@@ -1673,6 +1723,17 @@ begin
     fProjectPath  := System.IO.Path.GetDirectoryName(dlg.FileName) + '\';
     fXamlFileName := System.IO.Path.GetFileName(dlg.FileName);
     fPasFileName  := System.IO.Path.GetFileName(pasPath);
+
+    // ★ 추가: 프로젝트 옵션을 .opts 파일로 저장
+    fOptions.ProjectPath := fProjectPath;
+    try
+      var optsPath := fProjectPath + System.IO.Path.GetFileNameWithoutExtension(fXamlFileName) + '.opts';
+      fOptions.SaveToFile(optsPath);
+    except
+      on ex: System.Exception do
+        AppendOutput('옵션 저장 실패: ' + ex.Message, true);
+    end;
+
     Self.Text := 'PascalABC-WPF-Designer — ' + fProjectPath;
     RefreshSolutionExplorer();
     System.Windows.Forms.MessageBox.Show(
@@ -1706,10 +1767,31 @@ begin
   ParseXClassInfo(xaml, fNamespace, fClassName);
   fProjectType := (if xaml.Contains('<UserControl') then ptWpfControlLibrary else ptWpfApp);
 
-  fOptions.ProjectPath   := fProjectPath;
-  fOptions.ProjectType   := fProjectType;
-  fOptions.RootNamespace := fNamespace;
-  fOptions.ClassName     := fClassName;
+  // ★ 수정: .opts 파일이 있으면 저장된 옵션을 로드하고, 없으면 XAML에서 파싱한 값만 적용
+  //   이전 코드는 열기 때마다 ProjectPath/Type/Namespace/ClassName만 갱신하고
+  //   AssemblyVersion 등 나머지 값은 초기값(1.0.0.0)으로 남아 있었음
+  var optsPath := fProjectPath + System.IO.Path.GetFileNameWithoutExtension(fXamlFileName) + '.opts';
+  if System.IO.File.Exists(optsPath) then
+  begin
+    try
+      fOptions.LoadFromFile(optsPath);
+    except
+      on ex: System.Exception do
+        AppendOutput('옵션 파일 로드 실패 (기본값 사용): ' + ex.Message, true);
+    end;
+    // XAML에서 파싱된 최신 값으로 덮어쓰기 (네임스페이스/클래스명은 XAML이 정답)
+    fOptions.ProjectPath   := fProjectPath;
+    fOptions.ProjectType   := fProjectType;
+    fOptions.RootNamespace := fNamespace;
+    fOptions.ClassName     := fClassName;
+  end
+  else
+  begin
+    fOptions.ProjectPath   := fProjectPath;
+    fOptions.ProjectType   := fProjectType;
+    fOptions.RootNamespace := fNamespace;
+    fOptions.ClassName     := fClassName;
+  end;
 
   LoadXaml(xaml);
 
@@ -3031,9 +3113,10 @@ end;
 procedure Form1.LayoutDlgBtnBar;
 begin
   if fDlgBtnBar.ClientSize.Width <= 0 then exit;
-  fDlgBtnOk.Left     := fDlgBtnBar.ClientSize.Width - 16 - fDlgBtnOk.Width;
-  fDlgBtnCancel.Left := fDlgBtnOk.Left - 8 - fDlgBtnCancel.Width;
-  fDlgBtnApply.Left  := fDlgBtnCancel.Left - 8 - fDlgBtnApply.Width;
+  // ★ 수정: VS2022 스타일 — 오른쪽 여백 12px, 버튼 간격 6px
+  fDlgBtnOk.Left     := fDlgBtnBar.ClientSize.Width - 12 - fDlgBtnOk.Width;
+  fDlgBtnCancel.Left := fDlgBtnOk.Left - 6 - fDlgBtnCancel.Width;
+  fDlgBtnApply.Left  := fDlgBtnCancel.Left - 6 - fDlgBtnApply.Width;
 end;
 
 procedure Form1.OnBtnBarLayoutEvent(sender: System.Object; e: System.EventArgs);
@@ -3047,7 +3130,7 @@ end;
 procedure Form1.OnAbout(sender: System.Object; e: System.EventArgs);
 begin
   System.Windows.Forms.MessageBox.Show(
-    'PascalABC-WPF-Designer Ver 2.2.3' + System.Environment.NewLine + System.Environment.NewLine +
+    'PascalABC-WPF-Designer Ver 2.2.4' + System.Environment.NewLine + System.Environment.NewLine +
     '■ 리팩토링 구조' + System.Environment.NewLine +
     '  Models/   : ProjectOptions, ControlInfo' + System.Environment.NewLine +
     '  Events/   : WpfEventMap' + System.Environment.NewLine +

@@ -7,6 +7,15 @@ PascalABC.net 개발툴을 활용한 pascal wpf xaml Designer
 4. DockPanelSuite             : https://www.nuget.org/api/v2/package/DockPanelSuite/3.1.0
 5. DockPanelSuite.ThemeVS2015 : https://www.nuget.org/packages/DockPanelSuite.ThemeVS2015/
 
+[Ver 2.2.4]
+* Project Options UI Controls 위치 수정
+  
+* Project Options 에서 설정된 값을 *.opts 파일에서 저장하고 불러오도록 수정
+  
+<img src='https://github.com/sigmak/PascalABC-WPF-Xaml-Designer/blob/main/screenshot/ver-2-2-4.png' />
+
+
+
 [Ver 2.2.3]
 * 프로젝트 옵션 출력물에 있는 어셈블리 정보 버전정보등이 빌드후 실행파일에 반영되도록 수정
 

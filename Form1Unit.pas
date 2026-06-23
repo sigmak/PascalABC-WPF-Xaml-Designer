@@ -37,6 +37,7 @@ uses
   XamlParser,            // ParseXClassInfo, ParseControlsFromXaml, StripEventAttributesForRuntime
   XamlPreprocessor,      // PreprocessXaml, StripCustomNamespaces, PrepareXamlForBuild
   PascalCodeGenerator,   // TPascalCodeGenerator
+  VersionResourcePatcher,// TVersionResourcePatcher — 빌드 후 EXE/DLL 에 VERSIONINFO 패치
   DockContents;          // TToolboxDock, TSolutionExplorerDock, TPropertyGridDock,
                           // TOutputDock, TErrorListDock, TMainDocumentDock
 
@@ -125,6 +126,15 @@ type
     fPanels          : array[0..6] of System.Windows.Forms.Panel;
     fContentPanel    := new System.Windows.Forms.Panel();
     fTxtProjName, fTxtRootNs, fTxtClassName : System.Windows.Forms.TextBox;
+    // 옵션 다이얼로그 컴파일러 경로 줄 (OnRowCompResize 에서 참조)
+    fDlgRowComp      : System.Windows.Forms.Panel;
+    fDlgBtnBrowseComp: System.Windows.Forms.Button;
+    fDlgTxtCompPath  : System.Windows.Forms.TextBox;
+    // 옵션 다이얼로그 버튼 바 (OnBtnBarLayoutEvent / LayoutDlgBtnBar 에서 참조)
+    fDlgBtnBar       : System.Windows.Forms.Panel;
+    fDlgBtnOk        : System.Windows.Forms.Button;
+    fDlgBtnCancel    : System.Windows.Forms.Button;
+    fDlgBtnApply     : System.Windows.Forms.Button;
 
     // ── 내부 UI 빌더 ────────────────────────────────────────────────────────
     procedure BuildMenu;
@@ -239,6 +249,11 @@ type
                 e: System.Windows.Forms.TreeNodeMouseClickEventArgs);
     procedure OnSolutionExplorerRefresh(sender: System.Object; e: System.EventArgs);
     procedure OnSolutionExplorerShowInFolder(sender: System.Object; e: System.EventArgs);
+
+    // ── 옵션 다이얼로그 내부 레이아웃 핸들러 ───────────────────────────────
+    procedure OnRowCompResize(sender: System.Object; e: System.EventArgs);
+    procedure LayoutDlgBtnBar;
+    procedure OnBtnBarLayoutEvent(sender: System.Object; e: System.EventArgs);
 
     // ── 도움말 ──────────────────────────────────────────────────────────────
     procedure OnAbout(sender: System.Object; e: System.EventArgs);
@@ -557,9 +572,21 @@ procedure Form1.ShowProjectOptionsDialog;
     Result.Height := 28;
     Result.Dock   := System.Windows.Forms.DockStyle.Top;
     lbl.Top := 3; lbl.Left := 0;
+    lbl.Anchor := System.Windows.Forms.AnchorStyles.Left or
+                  System.Windows.Forms.AnchorStyles.Top;
     ctl.Top := 3; ctl.Left := 175;
+    // ComboBox/NumericUpDown 은 너비를 늘리면 보기 이상해지는 경우가 있어
+    // TextBox 계열만 패널 폭에 맞춰 오른쪽까지 자동으로 늘어나도록 한다.
+    if (ctl is System.Windows.Forms.TextBox) then
+      ctl.Anchor := System.Windows.Forms.AnchorStyles.Left or
+                    System.Windows.Forms.AnchorStyles.Top or
+                    System.Windows.Forms.AnchorStyles.Right
+    else
+      ctl.Anchor := System.Windows.Forms.AnchorStyles.Left or
+                    System.Windows.Forms.AnchorStyles.Top;
     Result.Controls.Add(lbl);
     Result.Controls.Add(ctl);
+    Result.MinimumSize := new System.Drawing.Size(0, Result.Height);
   end;
 
   function MakeCkPanel(cb: System.Windows.Forms.CheckBox): System.Windows.Forms.Panel;
@@ -569,6 +596,8 @@ procedure Form1.ShowProjectOptionsDialog;
     Result.Dock   := System.Windows.Forms.DockStyle.Top;
     cb.Top  := 3;
     cb.Left := 175;
+    cb.Anchor := System.Windows.Forms.AnchorStyles.Left or
+                System.Windows.Forms.AnchorStyles.Top;
     Result.Controls.Add(cb);
   end;
 
@@ -577,13 +606,13 @@ var
   splitDlg     : System.Windows.Forms.SplitContainer;
   contentPanel : System.Windows.Forms.Panel;
   panels       : array[0..6] of System.Windows.Forms.Panel;
-  btnOk, btnCancel, btnApply : System.Windows.Forms.Button;
+
   i            : integer;
 
   // 각 페이지 컨트롤 참조
   txtProjName, txtRootNs, txtClassName, txtProjPath : System.Windows.Forms.TextBox;
   cboProjType                                        : System.Windows.Forms.ComboBox;
-  txtCompilerPath, txtAdditArgs                      : System.Windows.Forms.TextBox;
+  txtAdditArgs                                       : System.Windows.Forms.TextBox;
   chkNoConsole, chkDebug, chkWarnErr, chkAutoClean   : System.Windows.Forms.CheckBox;
   txtOutFile, txtOutDir, txtAsmVer                    : System.Windows.Forms.TextBox;
   txtAsmTitle, txtAsmCompany, txtAsmCopy              : System.Windows.Forms.TextBox;
@@ -630,35 +659,43 @@ var
 
   procedure BuildPageCompiler(p: System.Windows.Forms.Panel);
   var
-    rowComp       : System.Windows.Forms.Panel;
-    btnBrowseComp : System.Windows.Forms.Button;
     cks           : array[0..3] of System.Windows.Forms.CheckBox;
     ci            : integer;
   begin
     p.Controls.Add(MakeSectionLabel('컴파일러 설정'));
 
-    txtCompilerPath  := MakeTextBox(
+    fDlgTxtCompPath  := MakeTextBox(
       (if fOptions.CompilerPath <> '' then fOptions.CompilerPath else FindPabcCompiler()), 290);
-    fTxtCompilerPath := txtCompilerPath;
+    fTxtCompilerPath := fDlgTxtCompPath;
 
-    btnBrowseComp        := new System.Windows.Forms.Button();
-    btnBrowseComp.Text   := '...';
-    btnBrowseComp.Width  := 28;
-    btnBrowseComp.Height := 23;
-    btnBrowseComp.Left   := 175 + 294;
-    btnBrowseComp.Top    := 3;
-    btnBrowseComp.Font   := new System.Drawing.Font('Segoe UI', 9);
-    btnBrowseComp.Click  += OnBrowseCompClick;
+    fDlgBtnBrowseComp        := new System.Windows.Forms.Button();
+    fDlgBtnBrowseComp.Text   := '...';
+    fDlgBtnBrowseComp.Width  := 28;
+    fDlgBtnBrowseComp.Height := 23;
+    fDlgBtnBrowseComp.Top    := 3;
+    fDlgBtnBrowseComp.Font   := new System.Drawing.Font('Segoe UI', 9);
+    fDlgBtnBrowseComp.Click  += OnBrowseCompClick;
+    fDlgBtnBrowseComp.Anchor := System.Windows.Forms.AnchorStyles.Top or
+                            System.Windows.Forms.AnchorStyles.Right;
 
-    rowComp        := new System.Windows.Forms.Panel();
-    rowComp.Height := 28;
-    rowComp.Dock   := System.Windows.Forms.DockStyle.Top;
+    fDlgRowComp        := new System.Windows.Forms.Panel();
+    fDlgRowComp.Height := 28;
+    fDlgRowComp.Dock   := System.Windows.Forms.DockStyle.Top;
     var lbl        := MakeLabel('컴파일러 경로');
     lbl.Top        := 3; lbl.Left := 0;
-    txtCompilerPath.Top  := 3; txtCompilerPath.Left := 175;
-    rowComp.Controls.Add(lbl);
-    rowComp.Controls.Add(txtCompilerPath);
-    rowComp.Controls.Add(btnBrowseComp);
+    lbl.Anchor     := System.Windows.Forms.AnchorStyles.Left or
+                      System.Windows.Forms.AnchorStyles.Top;
+    fDlgTxtCompPath.Top    := 3; fDlgTxtCompPath.Left := 175;
+    fDlgTxtCompPath.Anchor := System.Windows.Forms.AnchorStyles.Left or
+                              System.Windows.Forms.AnchorStyles.Top;
+    fDlgRowComp.Controls.Add(lbl);
+    fDlgRowComp.Controls.Add(fDlgTxtCompPath);
+    fDlgRowComp.Controls.Add(fDlgBtnBrowseComp);
+
+    // 패널이 리사이즈될 때 텍스트박스가 찾아보기(...) 버튼 바로 앞까지 늘어나도록 처리
+    fDlgRowComp.Resize += OnRowCompResize;
+    fDlgBtnBrowseComp.Left := fDlgRowComp.Width - fDlgBtnBrowseComp.Width - 4;
+    fDlgTxtCompPath.Width := fDlgBtnBrowseComp.Left - fDlgTxtCompPath.Left - 6;
 
     txtAdditArgs := MakeTextBox(fOptions.AdditionalArgs, 320);
     chkNoConsole := MakeCheck('콘솔 창 숨기기 (/noconsole)', fOptions.NoConsole);
@@ -681,7 +718,7 @@ var
     p.Controls.Add(ckPanels[1]);
     p.Controls.Add(ckPanels[0]);
     p.Controls.Add(MakeRow(MakeLabel('추가 컴파일 인수'), txtAdditArgs));
-    p.Controls.Add(rowComp);
+    p.Controls.Add(fDlgRowComp);
     p.Controls.Add(MakeHint('PascalABC.NET 컴파일러(pabcnetc.exe) 경로와 빌드 옵션을 설정합니다.'));
   end;
 
@@ -771,8 +808,14 @@ var
     lineNumPanel.Dock      := System.Windows.Forms.DockStyle.Top;
     lineNumLabel           := MakeLabel('줄 번호 표시');
     lineNumLabel.Top       := 3; lineNumLabel.Left := 0;
+    lineNumLabel.Anchor    := System.Windows.Forms.AnchorStyles.Left or
+                              System.Windows.Forms.AnchorStyles.Top;
     chkXamlLineNum.Top     := 3; chkXamlLineNum.Left := 175;
+    chkXamlLineNum.Anchor  := System.Windows.Forms.AnchorStyles.Left or
+                              System.Windows.Forms.AnchorStyles.Top;
     chkCodeLineNum.Top     := 3; chkCodeLineNum.Left := 290;
+    chkCodeLineNum.Anchor  := System.Windows.Forms.AnchorStyles.Left or
+                              System.Windows.Forms.AnchorStyles.Top;
     lineNumPanel.Controls.Add(lineNumLabel);
     lineNumPanel.Controls.Add(chkXamlLineNum);
     lineNumPanel.Controls.Add(chkCodeLineNum);
@@ -824,7 +867,7 @@ var
     fOptions.ClassName        := txtClassName.Text.Trim();
     fOptions.ProjectType      := (if cboProjType.SelectedIndex = 1
                                   then ptWpfControlLibrary else ptWpfApp);
-    fOptions.CompilerPath     := txtCompilerPath.Text.Trim();
+    fOptions.CompilerPath     := fDlgTxtCompPath.Text.Trim();
     fOptions.AdditionalArgs   := txtAdditArgs.Text.Trim();
     fOptions.NoConsole        := chkNoConsole.Checked;
     fOptions.DebugInfo        := chkDebug.Checked;
@@ -869,6 +912,8 @@ var
     fProjectType := fOptions.ProjectType;
     ApplyOptionsToEditors();
   end;
+
+
 
 // ── 다이얼로그 조립 ──────────────────────────────────────────────────────────
 begin
@@ -916,7 +961,7 @@ begin
 
   // 컨트롤 참조 nil 초기화
   txtProjName := nil; txtRootNs := nil; txtClassName := nil;
-  txtCompilerPath := nil; txtAdditArgs := nil;
+  fDlgTxtCompPath := nil; txtAdditArgs := nil;
   chkNoConsole := nil; chkDebug := nil; chkWarnErr := nil; chkAutoClean := nil;
   txtOutFile := nil; txtOutDir := nil; chkCopyXaml := nil; chkEmbedAsm := nil;
   txtAsmVer := nil; txtAsmTitle := nil; txtAsmCompany := nil; txtAsmCopy := nil;
@@ -956,52 +1001,56 @@ begin
   splitDlg.Panel2.Controls.Add(fContentPanel);
 
   // 하단 버튼 바
-  var btnBar       := new System.Windows.Forms.Panel();
-  btnBar.Dock      := System.Windows.Forms.DockStyle.Bottom;
-  btnBar.Height    := 44;
-  btnBar.BackColor := System.Drawing.Color.FromArgb(245, 245, 250);
+  fDlgBtnBar           := new System.Windows.Forms.Panel();
+  fDlgBtnBar.Dock      := System.Windows.Forms.DockStyle.Bottom;
+  fDlgBtnBar.Height    := 44;
+  fDlgBtnBar.BackColor := System.Drawing.Color.FromArgb(245, 245, 250);
 
-  btnOk              := new System.Windows.Forms.Button();
-  btnOk.Text         := '확인';
-  btnOk.Width        := 80; btnOk.Height := 28;
-  btnOk.Left         := dlg.ClientSize.Width - 196;
-  btnOk.Top          := 8;
-  btnOk.Anchor       := System.Windows.Forms.AnchorStyles.Right or
+  fDlgBtnOk              := new System.Windows.Forms.Button();
+  fDlgBtnOk.Text         := '확인';
+  fDlgBtnOk.Width        := 80; fDlgBtnOk.Height := 28;
+  fDlgBtnOk.Top          := 8;
+  fDlgBtnOk.Anchor       := System.Windows.Forms.AnchorStyles.Right or
                         System.Windows.Forms.AnchorStyles.Top;
-  btnOk.BackColor    := System.Drawing.Color.FromArgb(72, 60, 180);
-  btnOk.ForeColor    := System.Drawing.Color.White;
-  btnOk.FlatStyle    := System.Windows.Forms.FlatStyle.Flat;
-  btnOk.FlatAppearance.BorderSize := 0;
-  btnOk.DialogResult := System.Windows.Forms.DialogResult.OK;
+  fDlgBtnOk.BackColor    := System.Drawing.Color.FromArgb(72, 60, 180);
+  fDlgBtnOk.ForeColor    := System.Drawing.Color.White;
+  fDlgBtnOk.FlatStyle    := System.Windows.Forms.FlatStyle.Flat;
+  fDlgBtnOk.FlatAppearance.BorderSize := 0;
+  fDlgBtnOk.DialogResult := System.Windows.Forms.DialogResult.OK;
 
-  btnCancel              := new System.Windows.Forms.Button();
-  btnCancel.Text         := '취소';
-  btnCancel.Width        := 80; btnCancel.Height := 28;
-  btnCancel.Left         := dlg.ClientSize.Width - 100;
-  btnCancel.Top          := 8;
-  btnCancel.Anchor       := System.Windows.Forms.AnchorStyles.Right or
+  fDlgBtnCancel              := new System.Windows.Forms.Button();
+  fDlgBtnCancel.Text         := '취소';
+  fDlgBtnCancel.Width        := 80; fDlgBtnCancel.Height := 28;
+  fDlgBtnCancel.Top          := 8;
+  fDlgBtnCancel.Anchor       := System.Windows.Forms.AnchorStyles.Right or
                             System.Windows.Forms.AnchorStyles.Top;
-  btnCancel.FlatStyle    := System.Windows.Forms.FlatStyle.Flat;
-  btnCancel.DialogResult := System.Windows.Forms.DialogResult.Cancel;
+  fDlgBtnCancel.FlatStyle    := System.Windows.Forms.FlatStyle.Flat;
+  fDlgBtnCancel.DialogResult := System.Windows.Forms.DialogResult.Cancel;
 
-  btnApply        := new System.Windows.Forms.Button();
-  btnApply.Text   := '적용';
-  btnApply.Width  := 80; btnApply.Height := 28;
-  btnApply.Left   := dlg.ClientSize.Width - 292;
-  btnApply.Top    := 8;
-  btnApply.Anchor := System.Windows.Forms.AnchorStyles.Right or
+  fDlgBtnApply        := new System.Windows.Forms.Button();
+  fDlgBtnApply.Text   := '적용';
+  fDlgBtnApply.Width  := 80; fDlgBtnApply.Height := 28;
+  fDlgBtnApply.Top    := 8;
+  fDlgBtnApply.Anchor := System.Windows.Forms.AnchorStyles.Right or
                      System.Windows.Forms.AnchorStyles.Top;
-  btnApply.FlatStyle := System.Windows.Forms.FlatStyle.Flat;
-  btnApply.Click  += OnApplyClick;
+  fDlgBtnApply.FlatStyle := System.Windows.Forms.FlatStyle.Flat;
+  fDlgBtnApply.Click  += OnApplyClick;
 
-  btnBar.Controls.Add(btnApply);
-  btnBar.Controls.Add(btnCancel);
-  btnBar.Controls.Add(btnOk);
+  fDlgBtnBar.Controls.Add(fDlgBtnApply);
+  fDlgBtnBar.Controls.Add(fDlgBtnCancel);
+  fDlgBtnBar.Controls.Add(fDlgBtnOk);
+
+  fDlgBtnBar.Resize += OnBtnBarLayoutEvent;
 
   dlg.Controls.Add(splitDlg);
-  dlg.Controls.Add(btnBar);
-  dlg.AcceptButton := btnOk;
-  dlg.CancelButton := btnCancel;
+  dlg.Controls.Add(fDlgBtnBar);
+  dlg.AcceptButton := fDlgBtnOk;
+  dlg.CancelButton := fDlgBtnCancel;
+
+  // dlg.Width 설정만으로는 Handle 이 아직 생성되지 않아 fDlgBtnBar.ClientSize 가
+  // 부정확할 수 있으므로, Shown 시점에 한 번 더 정렬해 확실히 보이도록 한다.
+  dlg.Shown += OnBtnBarLayoutEvent;
+  LayoutDlgBtnBar();
 
   if dlg.ShowDialog() = System.Windows.Forms.DialogResult.OK then
     if (txtProjName <> nil) and (txtRootNs <> nil) then
@@ -1046,8 +1095,8 @@ var
   lstType   : System.Windows.Forms.ListBox;
   txtName   : System.Windows.Forms.TextBox;
   btnBrowse : System.Windows.Forms.Button;
-  btnOk     : System.Windows.Forms.Button;
-  btnCancel : System.Windows.Forms.Button;
+  fDlgBtnOk     : System.Windows.Forms.Button;
+  fDlgBtnCancel : System.Windows.Forms.Button;
 begin
   Result    := false;
   projType  := ptWpfApp;
@@ -1103,24 +1152,24 @@ begin
   btnBrowse.Text   := '찾아보기...';
   btnBrowse.Click  += OnBrowseClick;
 
-  btnOk              := new System.Windows.Forms.Button();
-  btnOk.Text         := '확인';
-  btnOk.Left         := 356; btnOk.Top := 340;
-  btnOk.Width        := 80; btnOk.Height := 30;
-  btnOk.DialogResult := System.Windows.Forms.DialogResult.OK;
+  fDlgBtnOk              := new System.Windows.Forms.Button();
+  fDlgBtnOk.Text         := '확인';
+  fDlgBtnOk.Left         := 356; fDlgBtnOk.Top := 340;
+  fDlgBtnOk.Width        := 80; fDlgBtnOk.Height := 30;
+  fDlgBtnOk.DialogResult := System.Windows.Forms.DialogResult.OK;
 
-  btnCancel              := new System.Windows.Forms.Button();
-  btnCancel.Text         := '취소';
-  btnCancel.Left         := 444; btnCancel.Top := 340;
-  btnCancel.Width        := 80; btnCancel.Height := 30;
-  btnCancel.DialogResult := System.Windows.Forms.DialogResult.Cancel;
+  fDlgBtnCancel              := new System.Windows.Forms.Button();
+  fDlgBtnCancel.Text         := '취소';
+  fDlgBtnCancel.Left         := 444; fDlgBtnCancel.Top := 340;
+  fDlgBtnCancel.Width        := 80; fDlgBtnCancel.Height := 30;
+  fDlgBtnCancel.DialogResult := System.Windows.Forms.DialogResult.Cancel;
 
   dlg.Controls.Add(lblType);   dlg.Controls.Add(lstType);
   dlg.Controls.Add(lblName);   dlg.Controls.Add(txtName);
   dlg.Controls.Add(lblFolder); dlg.Controls.Add(fDlgTxtFolder);
-  dlg.Controls.Add(btnBrowse); dlg.Controls.Add(btnOk); dlg.Controls.Add(btnCancel);
-  dlg.AcceptButton := btnOk;
-  dlg.CancelButton := btnCancel;
+  dlg.Controls.Add(btnBrowse); dlg.Controls.Add(fDlgBtnOk); dlg.Controls.Add(fDlgBtnCancel);
+  dlg.AcceptButton := fDlgBtnOk;
+  dlg.CancelButton := fDlgBtnCancel;
 
   if dlg.ShowDialog() = System.Windows.Forms.DialogResult.OK then
   begin
@@ -1433,6 +1482,17 @@ begin
     var item := new System.Windows.Forms.ListViewItem('빌드 성공: ' + fBuildExePath);
     item.ForeColor := System.Drawing.Color.FromArgb(0, 128, 0);
     lvErrors.Items.Add(item);
+
+    if fOptions.EmbedAssemblyInfo then
+    begin
+      var patchErr: string := '';
+      if TVersionResourcePatcher.TryPatch(fBuildExePath, fOptions, patchErr) then
+        AppendOutput('어셈블리 버전 정보가 ' +
+          System.IO.Path.GetFileName(fBuildExePath) + ' 에 적용되었습니다.', false)
+      else
+        AppendOutput('어셈블리 버전 정보 적용 실패: ' + patchErr, true);
+    end;
+
     if fRunAfterBuild then LaunchBuiltExe();
   end
   else
@@ -2955,6 +3015,31 @@ end;
 procedure Form1.OnFormClosing(sender: System.Object;
   e: System.Windows.Forms.FormClosingEventArgs);
 begin KillPreviousBuildProcesses(); end;
+
+// =============================================================================
+// 정보 대화상자
+// =============================================================================
+// =============================================================================
+// 옵션 다이얼로그 내부 레이아웃 핸들러
+// =============================================================================
+procedure Form1.OnRowCompResize(sender: System.Object; e: System.EventArgs);
+begin
+  fDlgBtnBrowseComp.Left := fDlgRowComp.ClientSize.Width - fDlgBtnBrowseComp.Width - 4;
+  fDlgTxtCompPath.Width  := fDlgBtnBrowseComp.Left - fDlgTxtCompPath.Left - 6;
+end;
+
+procedure Form1.LayoutDlgBtnBar;
+begin
+  if fDlgBtnBar.ClientSize.Width <= 0 then exit;
+  fDlgBtnOk.Left     := fDlgBtnBar.ClientSize.Width - 16 - fDlgBtnOk.Width;
+  fDlgBtnCancel.Left := fDlgBtnOk.Left - 8 - fDlgBtnCancel.Width;
+  fDlgBtnApply.Left  := fDlgBtnCancel.Left - 8 - fDlgBtnApply.Width;
+end;
+
+procedure Form1.OnBtnBarLayoutEvent(sender: System.Object; e: System.EventArgs);
+begin
+  LayoutDlgBtnBar();
+end;
 
 // =============================================================================
 // 정보 대화상자

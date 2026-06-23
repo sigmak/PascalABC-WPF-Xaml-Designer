@@ -1,7 +1,7 @@
 ﻿unit Form1Unit;
 
 // =============================================================================
-// Form1.pas  —  PascalABC-WPF-Designer Ver 2.2.2  메인 폼
+// Form1.pas  —  PascalABC-WPF-Designer Ver 2.2.3  메인 폼
 //
 // 외부 유닛 의존성:
 //   Models/   ProjectOptions, ControlInfo
@@ -317,7 +317,7 @@ end;
 constructor Form1.Create;
 begin
   inherited Create;
-  Self.Text   := 'PascalABC-WPF-Designer Ver 2.2.2';
+  Self.Text   := 'PascalABC-WPF-Designer Ver 2.2.3';
   Self.Width  := 1600;
   Self.Height := 950;
 
@@ -3047,7 +3047,7 @@ end;
 procedure Form1.OnAbout(sender: System.Object; e: System.EventArgs);
 begin
   System.Windows.Forms.MessageBox.Show(
-    'PascalABC-WPF-Designer Ver 2.2.2' + System.Environment.NewLine + System.Environment.NewLine +
+    'PascalABC-WPF-Designer Ver 2.2.3' + System.Environment.NewLine + System.Environment.NewLine +
     '■ 리팩토링 구조' + System.Environment.NewLine +
     '  Models/   : ProjectOptions, ControlInfo' + System.Environment.NewLine +
     '  Events/   : WpfEventMap' + System.Environment.NewLine +

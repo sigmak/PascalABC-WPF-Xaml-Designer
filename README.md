@@ -7,6 +7,19 @@ PascalABC.net 개발툴을 활용한 pascal wpf xaml Designer
 4. DockPanelSuite             : https://www.nuget.org/api/v2/package/DockPanelSuite/3.1.0
 5. DockPanelSuite.ThemeVS2015 : https://www.nuget.org/packages/DockPanelSuite.ThemeVS2015/
 
+[Ver 2.2.3]
+* 프로젝트 옵션 출력물에 있는 어셈블리 정보 버전정보등이 빌드후 실행파일에 반영되도록 수정
+
+* VersionResourcePatcher.pas 추가
+
+* 아직은 프로젝트 옵션 항목들을 저장 관리 안됨.
+
+<img src='https://github.com/sigmak/PascalABC-WPF-Xaml-Designer/blob/main/screenshot/ver-2-2-3.png' />
+<img src='https://github.com/sigmak/PascalABC-WPF-Xaml-Designer/blob/main/screenshot/ver-2-2-3B.png' />
+<img src='https://github.com/sigmak/PascalABC-WPF-Xaml-Designer/blob/main/screenshot/ver-2-2-3C.png' />
+<img src='https://github.com/sigmak/PascalABC-WPF-Xaml-Designer/blob/main/screenshot/ver-2-2-3D.png' />
+
+
 
 [Ver 2.2.2]
 * DockContents.pas 를 추가해서

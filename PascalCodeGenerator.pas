@@ -17,7 +17,9 @@ uses
   ControlInfo,          // TControlInfo
   ProjectOptions,       // TProjectOptions
   WpfEventMap,          // GetEventParamType, GetEventDelegateType
-  XamlParser;           // ParseXClassInfo, ParseControlsFromXaml
+  XamlParser,           // ParseXClassInfo, ParseControlsFromXaml
+  LocalizationCore,   // ← 추가
+  Strings_Common;     // ← 추가  
 
 type
   TPascalCodeGenerator = class
@@ -137,7 +139,7 @@ begin
   // FindName 으로 컨트롤 필드 초기화
   if controls.Count > 0 then
   begin
-    sb.AppendLine('  // 컨트롤 필드 초기화 (FindName)');
+    sb.AppendLine('  // ' + TLoc.S('codegen.comment.init_fields')); // '  // 컨트롤 필드 초기화 (FindName)'
     foreach ctrl in controls do
     begin
       var wpfType := 'System.Windows.Controls.' + ctrl.TypeName;
@@ -159,7 +161,7 @@ begin
 
     if hasEvents then
     begin
-      sb.AppendLine('  // 이벤트 핸들러 연결');
+      sb.AppendLine('  // ' + TLoc.S('codegen.comment.connect_events')); // '  // 이벤트 핸들러 연결'
       foreach ctrl2 in controls do
         foreach ev in ctrl2.Events do
         begin
@@ -190,14 +192,14 @@ var
 begin
   ParseXClassInfo(xamlText, fNamespace, fClassName);
 
-  // x:Class のクラス名がプログラム名と重複している場合はサフィックスを付加
+  // x:Class 클래스 이름이 프로그램 이름과 겹치는 경우 접미사 추가
   if fClassName = fNamespace then
   begin
     var newCls    := fClassName + 'Window';
     var oldXClass := fNamespace + '.' + fClassName;
     var newXClass := fNamespace + '.' + newCls;
-    // 呼び出し元が xamlText を更新できるよう変換後の文字列を返す必要があるが、
-    // ここでは outNs/outCls だけ更新する (XAML 更新は Form1 側の責임)
+    // 호출자가 xamlText를 업데이트 할 수 있도록 변환 된 문자열을 반환해야하지만,
+    // 여기서는 outNs / outCls 만 업데이트합니다 (XAML 업데이트는 Form1 측의 책임임)
     fClassName := newCls;
   end;
 
@@ -210,7 +212,7 @@ begin
 
   sb := new System.Text.StringBuilder();
 
-  // ── プログラムヘッダ ────────────────────────────────────────────────────────
+  // ── 프로그램 헤더 ────────────────────────────────────────────────────────
   sb.AppendLine('program ' + programName + ';');
   sb.AppendLine('');
   sb.AppendLine('{$apptype windows}');
@@ -252,7 +254,7 @@ begin
 
   if hasEvents then
   begin
-    sb.AppendLine(indent + '// ── 이벤트 핸들러 선언 ─────────────────────');
+    sb.AppendLine(indent + '// ── ' + TLoc.S('codegen.comment.event_decl') + ' ─────────────────────'); //'// ── 이벤트 핸들러 선언 ─────────────────────'
     foreach ctrl in controls do
       foreach ev in ctrl.Events do
       begin
@@ -282,26 +284,26 @@ begin
   // ── 이벤트 핸들러 구현 스텁 ────────────────────────────────────────────────
   if hasEvents then
   begin
-    sb.AppendLine('// ── 이벤트 핸들러 구현 ──────────────────────────────────');
+    sb.AppendLine('// ── ' + TLoc.S('codegen.comment.event_impl') + ' ──────────────────────────────────'); //'// ── 이벤트 핸들러 구현 ──────────────────────────────────'
     sb.AppendLine('');
     foreach ctrl in controls do
       foreach ev in ctrl.Events do
       begin
         var paramType := GetEventParamType(ctrl.TypeName, ev.Item1);
         if fOptions.GenerateComments then
-          sb.AppendLine('// ' + ctrl.Name + '.' + ev.Item1 + ' 이벤트 핸들러');
+          sb.AppendLine('// ' + ctrl.Name + '.' + ev.Item1 + TLoc.S('codegen.comment.event_handler')); // ' 이벤트 핸들러'
         sb.AppendLine('procedure ' + fClassName + '.' + ev.Item2 +
           '(sender: System.Object; e: ' + paramType + ');');
         sb.AppendLine('begin');
         if fOptions.GenerateComments then
-          sb.AppendLine(indent + '// TODO: ' + ev.Item2 + ' 구현');
+          sb.AppendLine(indent + '// TODO: ' + ev.Item2 + TLoc.S('codegen.comment.impl')); // ' 구현'
         sb.AppendLine('end;');
         sb.AppendLine('');
       end;
   end;
 
   // ── 진입점 ─────────────────────────────────────────────────────────────────
-  sb.AppendLine('// ── 애플리케이션 진입점 ──────────────────────────────────');
+  sb.AppendLine('// ── ' + TLoc.S('codegen.comment.entrypoint') + ' ──────────────────────────────────'); // '// ── 애플리케이션 진입점 ──────────────────────────────────'
   sb.AppendLine('procedure RunApp;');
   sb.AppendLine('begin');
   sb.AppendLine(indent + 'try');
@@ -311,7 +313,7 @@ begin
   sb.AppendLine(indent + indent + 'on ex: System.Exception do');
   sb.AppendLine(indent + indent + indent + 'System.Windows.Forms.MessageBox.Show(');
   sb.AppendLine(indent + indent + indent + indent +
-    'ex.ToString(), ' + #39 + '실행 오류' + #39 + ',');
+    'ex.ToString(), ' + #39 + TLoc.S('codegen.runtime_error') + #39 + ','); // '실행 오류'
   sb.AppendLine(indent + indent + indent + indent +
     'System.Windows.Forms.MessageBoxButtons.OK,');
   sb.AppendLine(indent + indent + indent + indent +

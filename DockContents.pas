@@ -5,7 +5,9 @@
 
 uses
   System.Windows.Forms,
-  WeifenLuo.WinFormsUI.Docking;
+  WeifenLuo.WinFormsUI.Docking,
+  LocalizationCore,
+  Strings_Common;
 
 // =============================================================================
 // 헬퍼: DockAreas 플래그 상수
@@ -35,7 +37,7 @@ type
 constructor TToolboxDock.Create(host: System.Windows.Forms.Control);
 begin
   inherited Create;
-  Self.Text               := '도구 상자';
+  Self.Text               := TLoc.S('dock.toolbox');//'도구 상자';
   Self.CloseButtonVisible := true;
   Self.CloseButton        := true;
   Self.DockAreas          := WeifenLuo.WinFormsUI.Docking.DockAreas(DA_Left or DA_Right or DA_Float);
@@ -58,7 +60,7 @@ type
 constructor TSolutionExplorerDock.Create(trv: System.Windows.Forms.Control);
 begin
   inherited Create;
-  Self.Text               := '솔루션 탐색기';
+  Self.Text               := TLoc.S('dock.explorer');//'솔루션 탐색기';
   Self.CloseButtonVisible := true;
   Self.CloseButton        := true;
   Self.DockAreas          := WeifenLuo.WinFormsUI.Docking.DockAreas(DA_Left or DA_Right or DA_Float);
@@ -81,7 +83,7 @@ type
 constructor TPropertyGridDock.Create(host: System.Windows.Forms.Control);
 begin
   inherited Create;
-  Self.Text               := '속성';
+  Self.Text               := TLoc.S('dock.properties');//'속성';
   Self.CloseButtonVisible := true;
   Self.CloseButton        := true;
   Self.DockAreas          := WeifenLuo.WinFormsUI.Docking.DockAreas(DA_Left or DA_Right or DA_Float);
@@ -104,7 +106,7 @@ type
 constructor TOutputDock.Create(txt: System.Windows.Forms.Control);
 begin
   inherited Create;
-  Self.Text               := '출력';
+  Self.Text               := TLoc.S('dock.output');//'출력';
   Self.CloseButtonVisible := true;
   Self.CloseButton        := true;
   Self.DockAreas          := WeifenLuo.WinFormsUI.Docking.DockAreas(DA_Bottom or DA_Top or DA_Float);
@@ -127,7 +129,7 @@ type
 constructor TErrorListDock.Create(lv: System.Windows.Forms.Control);
 begin
   inherited Create;
-  Self.Text               := '오류 목록';
+  Self.Text               := TLoc.S('dock.errors');//'오류 목록';
   Self.CloseButtonVisible := true;
   Self.CloseButton        := true;
   Self.DockAreas          := WeifenLuo.WinFormsUI.Docking.DockAreas(DA_Bottom or DA_Top or DA_Float);
@@ -150,7 +152,7 @@ type
 constructor TMainDocumentDock.Create(tab: System.Windows.Forms.Control);
 begin
   inherited Create;
-  Self.Text               := '편집기';
+  Self.Text               := TLoc.S('dock.editor');//'편집기';
   Self.CloseButtonVisible := false;
   Self.CloseButton        := false;
   Self.DockAreas          := WeifenLuo.WinFormsUI.Docking.DockAreas(DA_Document);

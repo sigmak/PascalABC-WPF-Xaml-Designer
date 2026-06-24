@@ -11,6 +11,11 @@
     <Item Type="SourceFile" Name="WpfEventMap.pas" Path="WpfEventMap.pas" />
     <Item Type="SourceFile" Name="ControlInfo.pas" Path="ControlInfo.pas" />
     <Item Type="SourceFile" Name="ProjectOptions.pas" Path="ProjectOptions.pas" />
+    <Item Type="SourceFile" Name="SettingsDialog.pas" Path="SettingsDialog.pas" />
+    <Item Type="SourceFile" Name="AppSettings.pas" Path="AppSettings.pas" />
+    <Item Type="SourceFile" Name="LocalizationCore.pas" Path="LocalizationCore.pas" />
+    <Item Type="SourceFile" Name="Strings_Common.pas" Path="Strings_Common.pas" />
+    <Item Type="SourceFile" Name="Strings_Messages.pas" Path="Strings_Messages.pas" />
     <Item Type="Reference" AssemblyName="System" FullAssemblyName="System.dll" />
     <Item Type="Reference" AssemblyName="System.Windows.Forms" FullAssemblyName="System.Windows.Forms.dll" />
     <Item Type="Reference" AssemblyName="System.Drawing" FullAssemblyName="System.Drawing.dll" />

@@ -1,7 +1,7 @@
 ﻿unit Form1Unit;
 
 // =============================================================================
-// Form1.pas  —  PascalABC-WPF-Designer Ver 2.2.4  메인 폼
+// Form1.pas  —  PascalABC-WPF-Designer Ver 2.2.5  메인 폼
 //
 // 외부 유닛 의존성:
 //   Models/   ProjectOptions, ControlInfo
@@ -10,6 +10,8 @@
 //   CodeGen/  XamlParser, XamlPreprocessor, PascalCodeGenerator
 //   Docking/  DockContents
 // =============================================================================
+
+interface
 
 {$reference ICSharpCode.WpfDesign.dll}
 {$reference ICSharpCode.WpfDesign.Designer.dll}
@@ -38,8 +40,15 @@ uses
   XamlPreprocessor,      // PreprocessXaml, StripCustomNamespaces, PrepareXamlForBuild
   PascalCodeGenerator,   // TPascalCodeGenerator
   VersionResourcePatcher,// TVersionResourcePatcher — 빌드 후 EXE/DLL 에 VERSIONINFO 패치
-  DockContents;          // TToolboxDock, TSolutionExplorerDock, TPropertyGridDock,
+  DockContents,          // TToolboxDock, TSolutionExplorerDock, TPropertyGridDock,
                           // TOutputDock, TErrorListDock, TMainDocumentDock
+  // ── 다국어(Localization) ─────────────────────────────────────────────────
+  LocalizationCore,      // TLoc, TLanguage — 핵심 엔진 (조회/등록/위젯 바인딩)
+  Strings_Common,        // 메뉴/다이얼로그/컬럼 헤더 문자열 테이블
+  Strings_Messages,      // MessageBox 오류/정보 문자열 테이블
+  AppSettings,           // TAppSettings — 언어/IDE 전역 설정 저장·로드 (%AppData%)
+  SettingsDialog;        // TSettingsDialog — "설정(Настройки)" 다이얼로그
+                          // ※ 향후 기능 추가 시 Strings_<기능명> 유닛을 여기에 추가
 
 // =============================================================================
 // Form1
@@ -135,6 +144,8 @@ type
     fDlgBtnOk        : System.Windows.Forms.Button;
     fDlgBtnCancel    : System.Windows.Forms.Button;
     fDlgBtnApply     : System.Windows.Forms.Button;
+    
+    fApplyXamlBtn : System.Windows.Controls.Button;
 
     // ── 내부 UI 빌더 ────────────────────────────────────────────────────────
     procedure BuildMenu;
@@ -258,6 +269,10 @@ type
     // ── 도움말 ──────────────────────────────────────────────────────────────
     procedure OnAbout(sender: System.Object; e: System.EventArgs);
 
+    // ── 설정(다국어/IDE 전역 설정) ───────────────────────────────────────────
+    procedure OnSettings(sender: System.Object; e: System.EventArgs);
+    procedure OnSettingsLanguageChanged;
+
     // ── 코드 생성 헬퍼 ──────────────────────────────────────────────────────
     procedure RebuildCodeGen;
     function  GenerateCode: string;
@@ -265,6 +280,8 @@ type
   public
     constructor Create;
   end;
+
+implementation
 
 // =============================================================================
 // 헬퍼: 코드 생성기 재생성 및 코드 생성
@@ -317,7 +334,7 @@ end;
 constructor Form1.Create;
 begin
   inherited Create;
-  Self.Text   := 'PascalABC-WPF-Designer Ver 2.2.4';
+  Self.Text   := 'PascalABC-WPF-Designer Ver 2.2.5';
   Self.Width  := 1600;
   Self.Height := 950;
 
@@ -655,12 +672,12 @@ var
 
   procedure BuildPageInfo(p: System.Windows.Forms.Panel);
   begin
-    p.Controls.Add(MakeSectionLabel('프로젝트 정보'));
+    p.Controls.Add(MakeSectionLabel(TLoc.S('dlg.projectoptions.info.header'))); //'프로젝트 정보'
     txtProjName := MakeTextBox(fOptions.ProjectName, 280);
     cboProjType := MakeCombo(
-      ['WPF 애플리케이션 (.exe)', 'WPF 컨트롤 라이브러리 (.dll)'],
-      (if fOptions.ProjectType = ptWpfApp then 'WPF 애플리케이션 (.exe)'
-       else 'WPF 컨트롤 라이브러리 (.dll)'), 280); 
+      [TLoc.S('dlg.projectoptions.info.type_app'), TLoc.S('dlg.projectoptions.info.type_lib')], //['WPF 애플리케이션 (.exe)', 'WPF 컨트롤 라이브러리 (.dll)'],
+      (if fOptions.ProjectType = ptWpfApp then TLoc.S('dlg.projectoptions.info.type_app') //'WPF 애플리케이션 (.exe)'
+       else TLoc.S('dlg.projectoptions.info.type_lib')), 280); //'WPF 컨트롤 라이브러리 (.dll)' 
     txtRootNs   := MakeTextBox(fOptions.RootNamespace, 280); 
     txtClassName := MakeTextBox(fOptions.ClassName, 280); 
     txtProjPath  := MakeTextBox(fProjectPath, 380); 
@@ -669,12 +686,12 @@ var
     fTxtRootNs   := txtRootNs;
     fTxtClassName := txtClassName;
 
-    p.Controls.Add(MakeRow(MakeLabel('프로젝트 경로'), txtProjPath));
-    p.Controls.Add(MakeRow(MakeLabel('클래스 이름'), txtClassName));
-    p.Controls.Add(MakeRow(MakeLabel('루트 네임스페이스'), txtRootNs));
-    p.Controls.Add(MakeRow(MakeLabel('프로젝트 형식'), cboProjType));
-    p.Controls.Add(MakeRow(MakeLabel('프로젝트 이름'), txtProjName));
-    p.Controls.Add(MakeHint('프로젝트의 기본 정보를 설정합니다.'));
+    p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.info.path')), txtProjPath)); //'프로젝트 경로'
+    p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.info.classname')), txtClassName)); //'클래스 이름'
+    p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.info.rootns')), txtRootNs)); //'루트 네임스페이스'
+    p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.info.type')), cboProjType)); //'프로젝트 형식'
+    p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.info.name')), txtProjName)); //'프로젝트 이름'
+    p.Controls.Add(MakeHint(TLoc.S('dlg.projectoptions.info.hint'))); //'프로젝트의 기본 정보를 설정합니다.'
   end;
 
   procedure BuildPageCompiler(p: System.Windows.Forms.Panel);
@@ -682,7 +699,7 @@ var
     cks           : array[0..3] of System.Windows.Forms.CheckBox;
     ci            : integer;
   begin
-    p.Controls.Add(MakeSectionLabel('컴파일러 설정'));
+    p.Controls.Add(MakeSectionLabel(TLoc.S('dlg.projectoptions.compiler.header'))); // '컴파일러 설정'
 
     fDlgTxtCompPath  := MakeTextBox(
       (if fOptions.CompilerPath <> '' then fOptions.CompilerPath else FindPabcCompiler()), 290);
@@ -701,7 +718,7 @@ var
     fDlgRowComp        := new System.Windows.Forms.Panel();
     fDlgRowComp.Height := 28;
     fDlgRowComp.Dock   := System.Windows.Forms.DockStyle.Top;
-    var lbl        := MakeLabel('컴파일러 경로');
+    var lbl        := MakeLabel(TLoc.S('dlg.projectoptions.compiler.path')); //'컴파일러 경로'
     lbl.Top        := 3; lbl.Left := 0;
     lbl.Anchor     := System.Windows.Forms.AnchorStyles.Left or
                       System.Windows.Forms.AnchorStyles.Top;
@@ -718,10 +735,10 @@ var
     fDlgTxtCompPath.Width := fDlgBtnBrowseComp.Left - fDlgTxtCompPath.Left - 6;
 
     txtAdditArgs := MakeTextBox(fOptions.AdditionalArgs, 320);
-    chkNoConsole := MakeCheck('콘솔 창 숨기기 (/noconsole)', fOptions.NoConsole);
-    chkDebug     := MakeCheck('디버그 심볼 포함 (/debug)',    fOptions.DebugInfo);
-    chkWarnErr   := MakeCheck('경고를 오류로 처리 (/werr)',   fOptions.WarningsAsErrors);
-    chkAutoClean := MakeCheck('빌드 전 .pcu 캐시 자동 삭제',  fOptions.AutoClean);
+    chkNoConsole := MakeCheck(TLoc.S('dlg.projectoptions.compiler.no_console'), fOptions.NoConsole); //'콘솔 창 숨기기 (/noconsole)'
+    chkDebug     := MakeCheck(TLoc.S('dlg.projectoptions.compiler.debug'),    fOptions.DebugInfo); //'디버그 심볼 포함 (/debug)'
+    chkWarnErr   := MakeCheck(TLoc.S('dlg.projectoptions.compiler.warn_err'),   fOptions.WarningsAsErrors); //'경고를 오류로 처리 (/werr)'
+    chkAutoClean := MakeCheck(TLoc.S('dlg.projectoptions.compiler.auto_clean'),  fOptions.AutoClean); //'빌드 전 .pcu 캐시 자동 삭제'
 
     cks[0] := chkNoConsole; cks[1] := chkDebug;
     cks[2] := chkWarnErr;   cks[3] := chkAutoClean;
@@ -737,69 +754,69 @@ var
     p.Controls.Add(ckPanels[2]);
     p.Controls.Add(ckPanels[1]);
     p.Controls.Add(ckPanels[0]);
-    p.Controls.Add(MakeRow(MakeLabel('추가 컴파일 인수'), txtAdditArgs));
+    p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.compiler.args')), txtAdditArgs)); //'추가 컴파일 인수'
     p.Controls.Add(fDlgRowComp);
-    p.Controls.Add(MakeHint('PascalABC.NET 컴파일러(pabcnetc.exe) 경로와 빌드 옵션을 설정합니다.'));
+    p.Controls.Add(MakeHint(TLoc.S('dlg.projectoptions.compiler.hint'))); //'PascalABC.NET 컴파일러(pabcnetc.exe) 경로와 빌드 옵션을 설정합니다.'
   end;
 
   procedure BuildPageOutput(p: System.Windows.Forms.Panel);
   begin
-    p.Controls.Add(MakeSectionLabel('출력 설정'));
+    p.Controls.Add(MakeSectionLabel(TLoc.S('dlg.projectoptions.output.header'))); //'출력 설정'
     txtOutFile    := MakeTextBox(fOptions.OutputFileName,    280);
     txtOutDir     := MakeTextBox(fOptions.OutputDirectory,   280);
-    chkCopyXaml  := MakeCheck('XAML 파일을 출력 디렉터리에 복사', fOptions.CopyXamlToOutput);
-    chkEmbedAsm  := MakeCheck('어셈블리 정보 포함',               fOptions.EmbedAssemblyInfo);
+    chkCopyXaml  := MakeCheck(TLoc.S('dlg.projectoptions.output.copy_xaml'), fOptions.CopyXamlToOutput); //'XAML 파일을 출력 디렉터리에 복사'
+    chkEmbedAsm  := MakeCheck(TLoc.S('dlg.projectoptions.output.embed_asm'),               fOptions.EmbedAssemblyInfo); //'어셈블리 정보 포함'
     txtAsmTitle   := MakeTextBox(fOptions.AssemblyTitle,     280);
     txtAsmCompany := MakeTextBox(fOptions.AssemblyCompany,   280);
     txtAsmCopy    := MakeTextBox(fOptions.AssemblyCopyright, 280);
     txtAsmVer     := MakeTextBox(fOptions.AssemblyVersion,   140);
 
     p.Controls.Add(MakeSeparator());
-    p.Controls.Add(MakeSectionLabel('어셈블리 정보'));
-    p.Controls.Add(MakeRow(MakeLabel('어셈블리 버전'), txtAsmVer));
-    p.Controls.Add(MakeRow(MakeLabel('저작권'),        txtAsmCopy));
-    p.Controls.Add(MakeRow(MakeLabel('회사'),          txtAsmCompany));
-    p.Controls.Add(MakeRow(MakeLabel('제목'),          txtAsmTitle));
+    p.Controls.Add(MakeSectionLabel(TLoc.S('dlg.projectoptions.output.asm_header'))); //'어셈블리 정보'
+    p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.output.asm_ver')), txtAsmVer)); //'어셈블리 버전'
+    p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.output.asm_copy')),        txtAsmCopy)); //'저작권'
+    p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.output.asm_company')),          txtAsmCompany)); //'회사'
+    p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.output.asm_title')),          txtAsmTitle)); //'제목'
     p.Controls.Add(MakeCkPanel(chkEmbedAsm));
     p.Controls.Add(MakeCkPanel(chkCopyXaml));
-    p.Controls.Add(MakeRow(MakeLabel('출력 디렉터리'), txtOutDir));
-    p.Controls.Add(MakeRow(MakeLabel('출력 파일명'),   txtOutFile));
-    p.Controls.Add(MakeHint('빌드 출력 파일 경로와 어셈블리 메타데이터를 설정합니다.'));
+    p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.output.dir')), txtOutDir)); //'출력 디렉터리'
+    p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.output.file')),   txtOutFile)); //'출력 파일명'
+    p.Controls.Add(MakeHint(TLoc.S('dlg.projectoptions.output.hint'))); //'빌드 출력 파일 경로와 어셈블리 메타데이터를 설정합니다.'
   end;
 
   procedure BuildPageOptimize(p: System.Windows.Forms.Panel);
   begin
-    p.Controls.Add(MakeSectionLabel('최적화 설정'));
-    cboTarget   := MakeCombo(['AnyCPU', 'x86 (32비트)', 'x64 (64비트)'],
+    p.Controls.Add(MakeSectionLabel(TLoc.S('dlg.projectoptions.optimize.header'))); //'최적화 설정'
+    cboTarget   := MakeCombo(['AnyCPU', TLoc.S('dlg.projectoptions.optimize.x86'), TLoc.S('dlg.projectoptions.optimize.x64')], //'x86 (32비트)', 'x64 (64비트)'],
                              fOptions.TargetPlatform, 200);
-    chkOptimize := MakeCheck('코드 최적화 (/optimize)', fOptions.OptimizeCode);
-    chkInline   := MakeCheck('인라인 확장 (/inline)',   fOptions.InlineExpansion);
+    chkOptimize := MakeCheck(TLoc.S('dlg.projectoptions.optimize.optimize'), fOptions.OptimizeCode); //'코드 최적화 (/optimize)'
+    chkInline   := MakeCheck(TLoc.S('dlg.projectoptions.optimize.inline'),   fOptions.InlineExpansion); //'인라인 확장 (/inline)'
     p.Controls.Add(MakeCkPanel(chkInline));
     p.Controls.Add(MakeCkPanel(chkOptimize));
-    p.Controls.Add(MakeRow(MakeLabel('대상 플랫폼'), cboTarget));
-    p.Controls.Add(MakeHint('컴파일 최적화 옵션을 설정합니다.'));
+    p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.optimize.platform')), cboTarget)); //'대상 플랫폼'
+    p.Controls.Add(MakeHint(TLoc.S('dlg.projectoptions.optimize.hint'))); //'컴파일 최적화 옵션을 설정합니다.'
   end;
 
   procedure BuildPageCodeStyle(p: System.Windows.Forms.Panel);
   begin
-    p.Controls.Add(MakeSectionLabel('코드 스타일'));
+    p.Controls.Add(MakeSectionLabel(TLoc.S('dlg.projectoptions.codestyle.header'))); //'코드 스타일'
     spnIndent       := MakeSpinner(fOptions.IndentSize, 1, 8, 60);
-    cboBrace        := MakeCombo(['Pascal (begin/end 같은 줄)', 'Allman (begin 새 줄)'],
+    cboBrace        := MakeCombo([TLoc.S('dlg.projectoptions.codestyle.brace_pascal'), TLoc.S('dlg.projectoptions.codestyle.brace_allman')], //'Pascal (begin/end 같은 줄)', 'Allman (begin 새 줄)'],
                                  fOptions.BraceStyle, 260);
     cboCommentStyle := MakeCombo(['Line (//)', 'Block ({})', 'XML (//)'],
                                  fOptions.CommentStyle, 180);
-    chkUseTabs      := MakeCheck('탭 문자 사용',                         fOptions.UseTabs);
-    chkAutoBegin    := MakeCheck('procedure/function 뒤 begin 자동 삽입', fOptions.AutoInsertBegin);
-    chkAutoEnd      := MakeCheck('begin 뒤 end 자동 완성',               fOptions.AutoInsertEnd);
-    chkGenComments  := MakeCheck('이벤트 핸들러에 TODO 주석 생성',         fOptions.GenerateComments);
+    chkUseTabs      := MakeCheck(TLoc.S('dlg.projectoptions.codestyle.use_tabs'),                         fOptions.UseTabs); //'탭 문자 사용'
+    chkAutoBegin    := MakeCheck(TLoc.S('dlg.projectoptions.codestyle.auto_begin'), fOptions.AutoInsertBegin); //'procedure/function 뒤 begin 자동 삽입'
+    chkAutoEnd      := MakeCheck(TLoc.S('dlg.projectoptions.codestyle.auto_end'),               fOptions.AutoInsertEnd); //'begin 뒤 end 자동 완성'
+    chkGenComments  := MakeCheck(TLoc.S('dlg.projectoptions.codestyle.gen_comments'),         fOptions.GenerateComments); //'이벤트 핸들러에 TODO 주석 생성'
     p.Controls.Add(MakeCkPanel(chkGenComments));
     p.Controls.Add(MakeCkPanel(chkAutoEnd));
     p.Controls.Add(MakeCkPanel(chkAutoBegin));
     p.Controls.Add(MakeCkPanel(chkUseTabs));
-    p.Controls.Add(MakeRow(MakeLabel('주석 스타일'),   cboCommentStyle));
-    p.Controls.Add(MakeRow(MakeLabel('중괄호 스타일'), cboBrace));
-    p.Controls.Add(MakeRow(MakeLabel('들여쓰기 크기'), spnIndent));
-    p.Controls.Add(MakeHint('자동 코드 생성 시 적용되는 스타일을 설정합니다.'));
+    p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.codestyle.comment_style')),   cboCommentStyle)); //'주석 스타일'
+    p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.codestyle.brace_style')), cboBrace)); //'중괄호 스타일'
+    p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.codestyle.indent_size')), spnIndent)); //'들여쓰기 크기'
+    p.Controls.Add(MakeHint(TLoc.S('dlg.projectoptions.codestyle.hint'))); //'자동 코드 생성 시 적용되는 스타일을 설정합니다.'
   end;
 
   procedure BuildPageEditor(p: System.Windows.Forms.Panel);
@@ -807,26 +824,26 @@ var
     lineNumPanel : System.Windows.Forms.Panel;
     lineNumLabel : System.Windows.Forms.Label;
   begin
-    p.Controls.Add(MakeSectionLabel('에디터 설정'));
+    p.Controls.Add(MakeSectionLabel(TLoc.S('dlg.projectoptions.editor.header'))); //'에디터 설정'
     txtFont         := MakeTextBox(fOptions.FontName, 180);
     spnFontSize     := MakeSpinner(fOptions.FontSize, 8, 32, 60);
     spnTabSize      := MakeSpinner(fOptions.TabSize,  1,  8, 60);
-    chkXamlLineNum  := MakeCheck('XAML 에디터',         fOptions.XamlShowLineNum);
-    chkCodeLineNum  := MakeCheck('코드 에디터',         fOptions.CodeShowLineNum);
-    chkXamlHL       := MakeCheck('XAML 구문 강조',      fOptions.XamlHighlight);
-    chkCodeHL       := MakeCheck('Pascal 구문 강조',    fOptions.CodeHighlight);
-    chkWordWrap     := MakeCheck('자동 줄바꿈',          fOptions.WordWrap);
-    chkXamlFold     := MakeCheck('XAML XML 폴딩',       fOptions.XamlFolding);
-    chkCodeFold     := MakeCheck('Pascal begin/end 폴딩',fOptions.CodeFolding);
-    chkShowWS       := MakeCheck('공백 문자 표시',       fOptions.ShowWhitespace);
-    chkHlLine       := MakeCheck('현재 줄 강조',         fOptions.HighlightCurrLine);
-    chkAutoComp     := MakeCheck('자동 완성',            fOptions.AutoComplete);
+    chkXamlLineNum  := MakeCheck(TLoc.S('dlg.projectoptions.editor.linenum_xaml'),         fOptions.XamlShowLineNum); //'XAML 에디터'
+    chkCodeLineNum  := MakeCheck(TLoc.S('dlg.projectoptions.editor.linenum_code'),         fOptions.CodeShowLineNum); //'코드 에디터'
+    chkXamlHL       := MakeCheck(TLoc.S('dlg.projectoptions.editor.hl_xaml'),      fOptions.XamlHighlight); //'XAML 구문 강조'
+    chkCodeHL       := MakeCheck(TLoc.S('dlg.projectoptions.editor.hl_code'),    fOptions.CodeHighlight); //'Pascal 구문 강조'
+    chkWordWrap     := MakeCheck(TLoc.S('dlg.projectoptions.editor.word_wrap'),          fOptions.WordWrap); //'자동 줄바꿈'
+    chkXamlFold     := MakeCheck(TLoc.S('dlg.projectoptions.editor.fold_xaml'),       fOptions.XamlFolding); //'XAML XML 폴딩'
+    chkCodeFold     := MakeCheck(TLoc.S('dlg.projectoptions.editor.fold_code'),fOptions.CodeFolding); //'Pascal begin/end 폴딩'
+    chkShowWS       := MakeCheck(TLoc.S('dlg.projectoptions.editor.show_ws'),       fOptions.ShowWhitespace); //'공백 문자 표시'
+    chkHlLine       := MakeCheck(TLoc.S('dlg.projectoptions.editor.hl_line'),         fOptions.HighlightCurrLine); //'현재 줄 강조'
+    chkAutoComp     := MakeCheck(TLoc.S('dlg.projectoptions.editor.auto_comp'),            fOptions.AutoComplete); //'자동 완성'
 
     // 줄 번호 표시: 두 체크박스를 같은 행에
     lineNumPanel           := new System.Windows.Forms.Panel();
     lineNumPanel.Height    := 26;
     lineNumPanel.Dock      := System.Windows.Forms.DockStyle.Top;
-    lineNumLabel           := MakeLabel('줄 번호 표시');
+    lineNumLabel           := MakeLabel(TLoc.S('dlg.projectoptions.editor.linenum_label')); //'줄 번호 표시'
     lineNumLabel.Top       := 3; lineNumLabel.Left := 0;
     lineNumLabel.Anchor    := System.Windows.Forms.AnchorStyles.Left or
                               System.Windows.Forms.AnchorStyles.Top;
@@ -849,34 +866,34 @@ var
     p.Controls.Add(MakeCkPanel(chkCodeHL));
     p.Controls.Add(MakeCkPanel(chkXamlHL));
     p.Controls.Add(lineNumPanel);
-    p.Controls.Add(MakeRow(MakeLabel('탭 너비'),   spnTabSize));
-    p.Controls.Add(MakeRow(MakeLabel('폰트 크기'), spnFontSize));
-    p.Controls.Add(MakeRow(MakeLabel('폰트'),      txtFont));
-    p.Controls.Add(MakeHint('XAML/코드 에디터 표시 옵션을 설정합니다.'));
+    p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.editor.tab_size')),   spnTabSize)); //'탭 너비'
+    p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.editor.font_size')), spnFontSize)); //'폰트 크기'
+    p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.editor.font')),      txtFont)); //'폰트'
+    p.Controls.Add(MakeHint(TLoc.S('dlg.projectoptions.editor.hint'))); //'XAML/코드 에디터 표시 옵션을 설정합니다.'
   end;
 
   procedure BuildPageDebug(p: System.Windows.Forms.Panel);
   var
     txtExtProgCtl, txtArgsCtl, txtWdCtl: System.Windows.Forms.TextBox;
   begin
-    p.Controls.Add(MakeSectionLabel('디버그/실행 설정'));
-    cboStartAct   := MakeCombo(['프로젝트 (기본)', '외부 프로그램', 'URL'],
+    p.Controls.Add(MakeSectionLabel(TLoc.S('dlg.projectoptions.debug.header'))); //'디버그/실행 설정'
+    cboStartAct   := MakeCombo([TLoc.S('dlg.projectoptions.debug.start_project'), TLoc.S('dlg.projectoptions.debug.start_ext'), 'URL'], //'프로젝트 (기본)', '외부 프로그램'
                                fOptions.StartAction, 200);
     txtExtProgCtl := MakeTextBox(fOptions.ExternalProgram, 280);
     txtExtProg    := txtExtProgCtl;
     txtArgsCtl    := MakeTextBox(fOptions.StartArgs,       280);
     txtStartArgs  := txtArgsCtl;
     txtWdCtl      := MakeTextBox(fOptions.WorkingDir,      280);
-    chkUseEnv     := MakeCheck('현재 환경 변수 사용',        fOptions.UseEnvVars);
-    chkRunBefore  := MakeCheck('빌드 전 프로젝트 저장 확인', fOptions.RunBeforeBuild);
+    chkUseEnv     := MakeCheck(TLoc.S('dlg.projectoptions.debug.use_env'),        fOptions.UseEnvVars); //'현재 환경 변수 사용'
+    chkRunBefore  := MakeCheck(TLoc.S('dlg.projectoptions.debug.run_before'), fOptions.RunBeforeBuild); //'빌드 전 프로젝트 저장 확인'
 
     p.Controls.Add(MakeCkPanel(chkRunBefore));
     p.Controls.Add(MakeCkPanel(chkUseEnv));
-    p.Controls.Add(MakeRow(MakeLabel('작업 디렉터리'), txtWdCtl));
-    p.Controls.Add(MakeRow(MakeLabel('시작 인수'),     txtArgsCtl));
-    p.Controls.Add(MakeRow(MakeLabel('외부 프로그램'), txtExtProgCtl));
-    p.Controls.Add(MakeRow(MakeLabel('시작 동작'),     cboStartAct));
-    p.Controls.Add(MakeHint('빌드 후 실행 방식과 디버그 환경을 설정합니다.'));
+    p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.debug.work_dir')), txtWdCtl)); //'작업 디렉터리'
+    p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.debug.start_args')),     txtArgsCtl)); //'시작 인수'
+    p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.debug.ext_prog')), txtExtProgCtl)); //'외부 프로그램'
+    p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.debug.start_act')),     cboStartAct)); //'시작 동작'
+    p.Controls.Add(MakeHint(TLoc.S('dlg.projectoptions.debug.hint'))); //'빌드 후 실행 방식과 디버그 환경을 설정합니다.'
   end;
 
   // ── 옵션 저장 ─────────────────────────────────────────────────────────────
@@ -938,7 +955,7 @@ var
 // ── 다이얼로그 조립 ──────────────────────────────────────────────────────────
 begin
   dlg        := new System.Windows.Forms.Form();
-  dlg.Text   := '프로젝트 옵션 — ' + fNamespace;
+  dlg.Text   := TLoc.F('dlg.projectoptions.title', fNamespace); //'프로젝트 옵션 — ' + fNamespace;
   // ★ 수정: VS2022/Rider 스타일 — 고정 크기, 리사이즈 불가, 최대화/최소화 버튼 없음
   dlg.Width  := 1620;//820;
   dlg.Height := 800;//600;
@@ -954,13 +971,13 @@ begin
   fNavList.BorderStyle := System.Windows.Forms.BorderStyle.None;
   //fNavList.BackColor   := System.Drawing.Color.FromArgb(240, 240, 245);
   fNavList.ItemHeight  := 30;
-  fNavList.Items.Add('  🏷  프로젝트 정보');
-  fNavList.Items.Add('  🔧  컴파일러');
-  fNavList.Items.Add('  📦  출력 설정');
-  fNavList.Items.Add('  ⚡  최적화');
-  fNavList.Items.Add('  🎨  코드 스타일');
-  fNavList.Items.Add('  📝  에디터');
-  fNavList.Items.Add('  ▶  디버그/실행');
+  fNavList.Items.Add(TLoc.S('dlg.projectoptions.nav.info')); //'  🏷  프로젝트 정보'
+  fNavList.Items.Add(TLoc.S('dlg.projectoptions.nav.compiler')); //'  🔧  컴파일러'
+  fNavList.Items.Add(TLoc.S('dlg.projectoptions.nav.output')); //'  📦  출력 설정'
+  fNavList.Items.Add(TLoc.S('dlg.projectoptions.nav.optimize')); //'  ⚡  최적화'
+  fNavList.Items.Add(TLoc.S('dlg.projectoptions.nav.codestyle')); //'  🎨  코드 스타일'
+  fNavList.Items.Add(TLoc.S('dlg.projectoptions.nav.editor')); //'  📝  에디터'
+  fNavList.Items.Add(TLoc.S('dlg.projectoptions.nav.debug')); //'  ▶  디버그/실행'
   fNavList.SelectedIndex := 0;
 
   fContentPanel              := new System.Windows.Forms.Panel();
@@ -1038,7 +1055,7 @@ begin
   fDlgBtnBar.Controls.Add(btnBarSep);
 
   fDlgBtnOk              := new System.Windows.Forms.Button();
-  fDlgBtnOk.Text         := '확인';
+  TLoc.Bind(fDlgBtnOk, 'btn.ok');
   fDlgBtnOk.Width        := 88; 
   fDlgBtnOk.Height       := 30;
   fDlgBtnOk.Top          := 9;
@@ -1052,7 +1069,7 @@ begin
   fDlgBtnOk.DialogResult := System.Windows.Forms.DialogResult.OK;
 
   fDlgBtnCancel              := new System.Windows.Forms.Button();
-  fDlgBtnCancel.Text         := '취소';
+  TLoc.Bind(fDlgBtnCancel, 'btn.cancel');
   fDlgBtnCancel.Width        := 88; 
   fDlgBtnCancel.Height       := 30;
   fDlgBtnCancel.Top          := 9;
@@ -1064,7 +1081,7 @@ begin
   fDlgBtnCancel.DialogResult := System.Windows.Forms.DialogResult.Cancel;
 
   fDlgBtnApply        := new System.Windows.Forms.Button();
-  fDlgBtnApply.Text   := '적용';
+  TLoc.Bind(fDlgBtnApply, 'btn.apply');
   fDlgBtnApply.Width  := 88; 
   fDlgBtnApply.Height := 30;
   fDlgBtnApply.Top    := 9;
@@ -1155,14 +1172,14 @@ begin
     System.Environment.SpecialFolder.MyDocuments);
 
   dlg        := new System.Windows.Forms.Form();
-  dlg.Text   := '새 프로젝트 만들기';
+  TLoc.Bind(dlg, 'dlg.newproject.title');
   dlg.Width  := 560; dlg.Height := 420;
   dlg.FormBorderStyle := System.Windows.Forms.FormBorderStyle.FixedDialog;
   dlg.StartPosition   := System.Windows.Forms.FormStartPosition.CenterParent;
   dlg.MaximizeBox := false; dlg.MinimizeBox := false;
 
   var lblType      := new System.Windows.Forms.Label();
-  lblType.Text := '프로젝트 형식';
+  TLoc.Bind(lblType, 'dlg.newproject.type_label');
   lblType.Left := 16; lblType.Top := 16; lblType.Width := 200;
   lblType.Font := new System.Drawing.Font('Segoe UI', 9, System.Drawing.FontStyle.Bold);
 
@@ -1170,12 +1187,12 @@ begin
   lstType.Left     := 16; lstType.Top := 36;
   lstType.Width    := 510; lstType.Height := 140;
   lstType.Font     := new System.Drawing.Font('Segoe UI', 10);
-  lstType.Items.Add('WPF 애플리케이션              (.exe)');
-  lstType.Items.Add('WPF 사용자 정의 컨트롤 라이브러리  (.dll)');
+  lstType.Items.Add(TLoc.S('dlg.newproject.type_app'));
+  lstType.Items.Add(TLoc.S('dlg.newproject.type_lib'));
   lstType.SelectedIndex := 0;
 
   var lblName      := new System.Windows.Forms.Label();
-  lblName.Text := '프로젝트 이름';
+  TLoc.Bind(lblName, 'dlg.newproject.name_label');
   lblName.Left := 16; lblName.Top := 196; lblName.Width := 200;
   lblName.Font := new System.Drawing.Font('Segoe UI', 9, System.Drawing.FontStyle.Bold);
 
@@ -1186,7 +1203,7 @@ begin
   txtName.Font     := new System.Drawing.Font('Segoe UI', 10);
 
   var lblFolder      := new System.Windows.Forms.Label();
-  lblFolder.Text := '위치';
+  TLoc.Bind(lblFolder, 'dlg.newproject.folder_label');
   lblFolder.Left := 16; lblFolder.Top := 256; lblFolder.Width := 200;
   lblFolder.Font := new System.Drawing.Font('Segoe UI', 9, System.Drawing.FontStyle.Bold);
 
@@ -1199,17 +1216,17 @@ begin
   btnBrowse        := new System.Windows.Forms.Button();
   btnBrowse.Left   := 444; btnBrowse.Top := 274;
   btnBrowse.Width  := 82; btnBrowse.Height := 28;
-  btnBrowse.Text   := '찾아보기...';
+  TLoc.Bind(btnBrowse, 'btn.browse');
   btnBrowse.Click  += OnBrowseClick;
 
   fDlgBtnOk              := new System.Windows.Forms.Button();
-  fDlgBtnOk.Text         := '확인';
+  TLoc.Bind(fDlgBtnOk, 'btn.ok');
   fDlgBtnOk.Left         := 356; fDlgBtnOk.Top := 340;
   fDlgBtnOk.Width        := 80; fDlgBtnOk.Height := 30;
   fDlgBtnOk.DialogResult := System.Windows.Forms.DialogResult.OK;
 
   fDlgBtnCancel              := new System.Windows.Forms.Button();
-  fDlgBtnCancel.Text         := '취소';
+  TLoc.Bind(fDlgBtnCancel, 'btn.cancel');
   fDlgBtnCancel.Left         := 444; fDlgBtnCancel.Top := 340;
   fDlgBtnCancel.Width        := 80; fDlgBtnCancel.Height := 30;
   fDlgBtnCancel.DialogResult := System.Windows.Forms.DialogResult.Cancel;
@@ -1243,8 +1260,8 @@ end;
 procedure Form1.OnBrowseCompClick(sender: System.Object; e: System.EventArgs);
 begin
   var od := new System.Windows.Forms.OpenFileDialog();
-  od.Filter := '실행 파일|pabcnetc.exe|모든 파일|*.*';
-  od.Title  := '컴파일러 선택';
+  od.Filter := TLoc.S('dlg.browse_compiler.filter'); //'실행 파일|pabcnetc.exe|모든 파일|*.*';
+  od.Title  := TLoc.S('dlg.browse_compiler.title'); //'컴파일러 선택';
   if od.ShowDialog() = System.Windows.Forms.DialogResult.OK then
     if fTxtCompilerPath <> nil then
       fTxtCompilerPath.Text := od.FileName;
@@ -1313,7 +1330,7 @@ begin
   fCodeEditor.Text := GenerateCode();
   ApplyCodeHighlighting();
   if fOptions.CodeFolding then EnableCodeFolding();
-  Self.Text := 'PascalABC-WPF-Designer — ' + fProjectPath;
+  Self.Text := TLoc.S('title.main_app') + ' — ' + fProjectPath;
   RefreshSolutionExplorer();
 end;
 
@@ -1376,8 +1393,8 @@ begin ClearOutput(); end;
 
 procedure Form1.OnRunProcessExited(sender: System.Object; e: System.EventArgs);
 begin
-  AppendOutput('====== 프로세스 종료 (종료코드: ' +
-    fRunningProcess.ExitCode.ToString() + ') ======', false);
+  AppendOutput('====== ' + TLoc.F('msg.build.process_exit', fRunningProcess.ExitCode.ToString()) + ' ======', false); //'====== 프로세스 종료 (종료코드: ' +
+   // fRunningProcess.ExitCode.ToString() + ') ======', false);
 end;
 
 // =============================================================================
@@ -1394,7 +1411,7 @@ begin
   ClearOutput();
   dockOutput.Show();
   dockOutput.Activate();
-  AppendOutput('====== 빌드 시작: ' + System.DateTime.Now.ToString('HH:mm:ss') + ' ======', false);
+  AppendOutput('====== ' + TLoc.F('msg.build.start', System.DateTime.Now.ToString('HH:mm:ss')) + ' ======', false); //'====== 빌드 시작: ' + System.DateTime.Now.ToString('HH:mm:ss') + ' ======', false);
 
   ParseXClassInfo(fXamlEditor.Text, fNamespace, fClassName);
 
@@ -1408,13 +1425,24 @@ begin
     buildXaml := PrepareXamlForBuild(fXamlEditor.Text);
     System.IO.File.WriteAllText(xamlPath, buildXaml, System.Text.Encoding.UTF8);
     System.IO.File.WriteAllText(pasPath, fCodeEditor.Text, System.Text.Encoding.UTF8);
-    AppendOutput('파일 저장: ' + xamlPath, false);
-    AppendOutput('파일 저장: ' + pasPath, false);
+    AppendOutput(TLoc.F('msg.build.file_saved', xamlPath), false); // '파일 저장: ' + xamlPath, false);
+    AppendOutput(TLoc.F('msg.build.file_saved', pasPath), false); //'파일 저장: ' + pasPath, false);
   except
     on ex: System.Exception do
     begin
-      AppendOutput('파일 저장 오류: ' + ex.Message, true);
-      System.Windows.Forms.MessageBox.Show('파일 저장 오류: ' + ex.Message);
+{      
+      AppendOutput(TLoc.F('msg.error.save_file', [ex.Message]), true);
+      System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.save_file', [ex.Message]),
+        TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
+        System.Windows.Forms.MessageBoxIcon.Error);
+}
+      // ✅ 수정
+      AppendOutput(TLoc.F('msg.error.save_file', ex.Message), true);
+      // ✅ 수정
+      System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.save_file', ex.Message),
+        TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
+        System.Windows.Forms.MessageBoxIcon.Error);
+
       exit;
     end;
   end;
@@ -1434,16 +1462,16 @@ begin
 
   if compilerPath = '' then
   begin
-    AppendOutput('pabcnetc.exe를 찾을 수 없습니다.', true);
-    System.Windows.Forms.MessageBox.Show('pabcnetc.exe를 찾을 수 없습니다.', '컴파일러 없음',
+    AppendOutput(TLoc.S('msg.error.compiler_not_found'), true);
+    System.Windows.Forms.MessageBox.Show(TLoc.S('msg.error.compiler_not_found'), TLoc.S('title.no_compiler'),
       System.Windows.Forms.MessageBoxButtons.OK,
       System.Windows.Forms.MessageBoxIcon.Warning);
     exit;
   end;
 
   pasPath := fProjectPath + fPasFileName;
-  AppendOutput('컴파일러: ' + compilerPath, false);
-  AppendOutput('대상: ' + pasPath, false);
+  AppendOutput(TLoc.F('msg.build.compiler', compilerPath), false); //'컴파일러: ' + compilerPath, false);
+  AppendOutput(TLoc.F('msg.build.target', pasPath), false); //'대상: ' + pasPath, false);
   AppendOutput('', false);
 
   var outExt := (if fProjectType = ptWpfControlLibrary then '.dll' else '.exe');
@@ -1484,8 +1512,18 @@ begin
   except
     on ex: System.Exception do
     begin
-      AppendOutput('빌드 시작 오류: ' + ex.Message, true);
-      System.Windows.Forms.MessageBox.Show('빌드 시작 오류: ' + ex.Message);
+{      
+      AppendOutput(TLoc.F('msg.error.build_start', [ex.Message]), true);
+      System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.build_start', [ex.Message]),
+        TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
+        System.Windows.Forms.MessageBoxIcon.Error);
+}
+      // ✅ 수정
+      AppendOutput(TLoc.F('msg.error.build_start', ex.Message), true);
+      // ✅ 수정
+      System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.build_start', ex.Message),
+        TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
+        System.Windows.Forms.MessageBoxIcon.Error);        
     end;
   end;
 end;
@@ -1522,14 +1560,16 @@ begin
   try exitCode := fBuildProcess.ExitCode; except end;
 
   AppendOutput('', false);
-  AppendOutput('====== 빌드 종료 (경과: ' +
-    (fBuildStopwatch.ElapsedMilliseconds / 1000.0).ToString('0.00') +
-    '초, 종료코드: ' + exitCode.ToString() + ') ======', false);
+  AppendOutput('====== ' + TLoc.F('msg.build.end',
+    (fBuildStopwatch.ElapsedMilliseconds / 1000.0).ToString('0.00'),
+    exitCode.ToString()) + ' ======', false); //'====== 빌드 종료 (경과: ' +
+    // (fBuildStopwatch.ElapsedMilliseconds / 1000.0).ToString('0.00') +
+    //'초, 종료코드: ' + exitCode.ToString() + ') ======', false);
 
   if (exitCode = 0) and System.IO.File.Exists(fBuildExePath) then
   begin
     lvErrors.Items.Clear();
-    var item := new System.Windows.Forms.ListViewItem('빌드 성공: ' + fBuildExePath);
+    var item := new System.Windows.Forms.ListViewItem(TLoc.F('msg.build.success', fBuildExePath)); //'빌드 성공: ' + fBuildExePath);
     item.ForeColor := System.Drawing.Color.FromArgb(0, 128, 0);
     lvErrors.Items.Add(item);
 
@@ -1537,10 +1577,10 @@ begin
     begin
       var patchErr: string := '';
       if TVersionResourcePatcher.TryPatch(fBuildExePath, fOptions, patchErr) then
-        AppendOutput('어셈블리 버전 정보가 ' +
-          System.IO.Path.GetFileName(fBuildExePath) + ' 에 적용되었습니다.', false)
+        AppendOutput(TLoc.F('msg.build.asm_patched', System.IO.Path.GetFileName(fBuildExePath)), false) // '어셈블리 버전 정보가 ' +
+          // System.IO.Path.GetFileName(fBuildExePath) + ' 에 적용되었습니다.', false)
       else
-        AppendOutput('어셈블리 버전 정보 적용 실패: ' + patchErr, true);
+        AppendOutput(TLoc.F('msg.build.asm_patch_failed', patchErr), true);//'어셈블리 버전 정보 적용 실패: ' + patchErr, true);
     end;
 
     if fRunAfterBuild then LaunchBuiltExe();
@@ -1569,7 +1609,7 @@ begin
   begin LaunchControlTestHost(); exit; end;
 
   AppendOutput('', false);
-  AppendOutput('====== 실행: ' + fBuildExePath + ' ======', false);
+  AppendOutput('====== ' + TLoc.F('msg.build.run', fBuildExePath) + ' ======', false); //'====== 실행: ' + fBuildExePath + ' ======', false);
   try
     var psi              := new System.Diagnostics.ProcessStartInfo();
     psi.FileName         := fBuildExePath;
@@ -1586,8 +1626,18 @@ begin
   except
     on ex: System.Exception do
     begin
-      AppendOutput('실행 오류: ' + ex.Message, true);
-      System.Windows.Forms.MessageBox.Show('실행 오류: ' + ex.Message);
+{     
+      AppendOutput(TLoc.F('msg.error.run', [ex.Message]), true);
+      System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.run', [ex.Message]),
+        TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
+        System.Windows.Forms.MessageBoxIcon.Error);
+}
+      // ✅ 수정
+      AppendOutput(TLoc.F('msg.error.run', ex.Message), true);   
+      // ✅ 수정
+      System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.run', ex.Message),
+        TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
+        System.Windows.Forms.MessageBoxIcon.Error);        
     end;
   end;
 end;
@@ -1603,7 +1653,7 @@ begin
   hostExePath := fProjectPath + hostName + '.exe';
 
   AppendOutput('', false);
-  AppendOutput('====== 컨트롤 테스트 호스트 생성 ======', false);
+  AppendOutput('====== ' + TLoc.S('msg.testhost.creating') + ' ======', false); //'====== 컨트롤 테스트 호스트 생성 ======', false);
 
   sb := new System.Text.StringBuilder();
   sb.AppendLine('program ' + hostName + ';');
@@ -1623,7 +1673,7 @@ begin
   sb.AppendLine('    var app  := new System.Windows.Application();');
   sb.AppendLine('    var ctrl := new ' + fClassName + '();');
   sb.AppendLine('    var win  := new System.Windows.Window();');
-  sb.AppendLine('    win.Title := ' + #39 + '컨트롤 테스트: ' + fClassName + #39 + ';');
+  sb.AppendLine('    win.Title := ' + #39 + TLoc.F('msg.testhost.window_title', fClassName) + #39 + ';'); //'컨트롤 테스트: ' + fClassName + #39 + ';');
   sb.AppendLine('    win.Content := ctrl;');
   sb.AppendLine('    win.SizeToContent := System.Windows.SizeToContent.WidthAndHeight;');
   sb.AppendLine('    win.MinWidth := 200; win.MinHeight := 100;');
@@ -1631,7 +1681,7 @@ begin
   sb.AppendLine('  except');
   sb.AppendLine('    on ex: System.Exception do');
   sb.AppendLine('      System.Windows.Forms.MessageBox.Show(');
-  sb.AppendLine('        ex.ToString(), ' + #39 + '테스트 호스트 오류' + #39 + ',');
+  sb.AppendLine('        ex.ToString(), ' + #39 + TLoc.S('msg.testhost.error_title') + #39 + ','); //
   sb.AppendLine('        System.Windows.Forms.MessageBoxButtons.OK,');
   sb.AppendLine('        System.Windows.Forms.MessageBoxIcon.Error);');
   sb.AppendLine('  end;');
@@ -1646,17 +1696,17 @@ begin
 
   try
     System.IO.File.WriteAllText(hostPasPath, sb.ToString(), System.Text.Encoding.UTF8);
-    AppendOutput('파일 저장: ' + hostPasPath, false);
+    AppendOutput(TLoc.F('msg.build.file_saved', hostPasPath), false); //'파일 저장: ' + hostPasPath, false);
   except
     on ex: System.Exception do
-    begin AppendOutput('호스트 파일 저장 오류: ' + ex.Message, true); exit; end;
+    begin AppendOutput(TLoc.F('msg.testhost.save_error', ex.Message), true); exit; end;//'호스트 파일 저장 오류: ' + ex.Message, true); exit; end;
   end;
 
   compilerPath := fOptions.CompilerPath;
   if (compilerPath = '') or not System.IO.File.Exists(compilerPath) then
     compilerPath := FindPabcCompiler();
   if compilerPath = '' then
-  begin AppendOutput('pabcnetc.exe를 찾을 수 없습니다.', true); exit; end;
+  begin AppendOutput(TLoc.S('msg.error.compiler_not_found'), true); exit; end; //'pabcnetc.exe를 찾을 수 없습니다.'
 
   try
     var psi              := new System.Diagnostics.ProcessStartInfo();
@@ -1681,10 +1731,10 @@ begin
     if errText.Trim() <> '' then AppendOutput(errText, true);
 
     if (hostProc.ExitCode <> 0) or not System.IO.File.Exists(hostExePath) then
-    begin AppendOutput('테스트 호스트 빌드 실패.', true); exit; end;
+    begin AppendOutput(TLoc.S('msg.testhost.build_failed'), true); exit; end; //'테스트 호스트 빌드 실패.'
 
-    AppendOutput('테스트 호스트 빌드 성공: ' + hostExePath, false);
-    AppendOutput('====== 실행: ' + hostExePath + ' ======', false);
+    AppendOutput(TLoc.F('msg.testhost.build_success', hostExePath), false); //'테스트 호스트 빌드 성공: ' + hostExePath, false);
+    AppendOutput('====== ' + TLoc.F('msg.build.run', hostExePath) + ' ======', false); //'====== 실행: ' + hostExePath + ' ======', false);
 
     var runPsi              := new System.Diagnostics.ProcessStartInfo();
     runPsi.FileName         := hostExePath;
@@ -1699,8 +1749,19 @@ begin
   except
     on ex: System.Exception do
     begin
-      AppendOutput('테스트 호스트 실행 오류: ' + ex.Message, true);
-      System.Windows.Forms.MessageBox.Show('테스트 호스트 실행 오류: ' + ex.Message);
+{      
+      AppendOutput(TLoc.F('msg.error.test_host_run', [ex.Message]), true);
+      System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.test_host_run', [ex.Message]),
+        TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
+        System.Windows.Forms.MessageBoxIcon.Error);
+}
+      // ✅ 수정
+      AppendOutput(TLoc.F('msg.error.test_host_run', ex.Message), true);
+      // ✅ 수정
+      System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.test_host_run', ex.Message),
+        TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
+        System.Windows.Forms.MessageBoxIcon.Error);
+ 
     end;
   end;
 end;
@@ -1712,7 +1773,7 @@ procedure Form1.OnSave(sender: System.Object; e: System.EventArgs);
 var dlg: System.Windows.Forms.SaveFileDialog;
 begin
   dlg          := new System.Windows.Forms.SaveFileDialog();
-  dlg.Filter   := 'XAML 파일|*.xaml|모든 파일|*.*';
+  dlg.Filter   := TLoc.S('dlg.save.filter'); //'XAML 파일|*.xaml|모든 파일|*.*';
   dlg.FileName := fXamlFileName;
   dlg.InitialDirectory := fProjectPath;
   if dlg.ShowDialog() = System.Windows.Forms.DialogResult.OK then
@@ -1731,13 +1792,25 @@ begin
       fOptions.SaveToFile(optsPath);
     except
       on ex: System.Exception do
-        AppendOutput('옵션 저장 실패: ' + ex.Message, true);
+        //AppendOutput(TLoc.F('msg.error.save_options', [ex.Message]), true);
+        // ✅ 수정
+        AppendOutput(TLoc.F('msg.error.save_options', ex.Message), true);        
     end;
 
-    Self.Text := 'PascalABC-WPF-Designer — ' + fProjectPath;
+    Self.Text := TLoc.S('title.main_app') + ' — ' + fProjectPath;
     RefreshSolutionExplorer();
+{    
     System.Windows.Forms.MessageBox.Show(
-      'XAML: ' + dlg.FileName + #13#10 + 'PAS: ' + pasPath + #13#10 + '저장 완료!');
+      TLoc.F('msg.info.save_done', [dlg.FileName, pasPath]),
+      TLoc.S('title.info'), System.Windows.Forms.MessageBoxButtons.OK,
+      System.Windows.Forms.MessageBoxIcon.Information);
+}
+    // ✅ 수정
+    System.Windows.Forms.MessageBox.Show(
+      TLoc.F('msg.info.save_done', dlg.FileName, pasPath),
+      TLoc.S('title.info'), System.Windows.Forms.MessageBoxButtons.OK,
+      System.Windows.Forms.MessageBoxIcon.Information);
+     
   end;
 end;
 
@@ -1748,14 +1821,26 @@ var
   pasPath: string;
 begin
   dlg        := new System.Windows.Forms.OpenFileDialog();
-  dlg.Filter := 'XAML 파일|*.xaml|모든 파일|*.*';
+  dlg.Filter := TLoc.S('dlg.open.filter'); //'XAML 파일|*.xaml|모든 파일|*.*';
   if dlg.ShowDialog() <> System.Windows.Forms.DialogResult.OK then exit;
 
   try
     xaml := System.IO.File.ReadAllText(dlg.FileName);
   except
     on ex: System.Exception do
-    begin System.Windows.Forms.MessageBox.Show('읽기 오류: ' + ex.Message); exit; end;
+    begin
+{      
+      System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.read_file', [ex.Message]),
+        TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
+        System.Windows.Forms.MessageBoxIcon.Error);
+}
+      // ✅ 수정
+      System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.read_file', ex.Message),
+        TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
+        System.Windows.Forms.MessageBoxIcon.Error);
+        
+      exit;
+    end;
   end;
 
   KillPreviousBuildProcesses();
@@ -2040,7 +2125,16 @@ begin
   except
     on ex: System.Exception do
     begin
-      System.Windows.Forms.MessageBox.Show('XAML 전처리 오류: ' + ex.Message);
+{      
+      System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.xaml_preprocess', [ex.Message]),
+        TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
+        System.Windows.Forms.MessageBoxIcon.Error);
+}
+      // ✅ 수정
+      System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.xaml_preprocess', ex.Message),
+        TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
+        System.Windows.Forms.MessageBoxIcon.Error);
+        
       exit;
     end;
   end;
@@ -2049,7 +2143,16 @@ begin
     try LoadDesigner(designXaml);
     except
       on ex: System.Exception do
-        System.Windows.Forms.MessageBox.Show('XAML 로드 오류: ' + ex.Message);
+{        
+        System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.xaml_load', [ex.Message]),
+          TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
+          System.Windows.Forms.MessageBoxIcon.Error);
+}
+      // ✅ 수정
+      System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.xaml_load', ex.Message),
+        TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
+        System.Windows.Forms.MessageBoxIcon.Error);
+
     end;
   finally
     fLoadingXaml := false;
@@ -2415,7 +2518,7 @@ begin
   lvErrors.Items.Clear();
   if output.Trim() = '' then
   begin
-    item := new System.Windows.Forms.ListViewItem('빌드 실패 — 출력 탭을 확인하세요.');
+    item := new System.Windows.Forms.ListViewItem(TLoc.S('msg.build.failed_check_output')); //'빌드 실패 — 출력 탭을 확인하세요.'
     item.ForeColor := System.Drawing.Color.Red;
     lvErrors.Items.Add(item);
     exit;
@@ -2438,7 +2541,7 @@ begin
   end;
   if lvErrors.Items.Count = 0 then
   begin
-    item := new System.Windows.Forms.ListViewItem('빌드 실패 — 출력 탭에서 전체 로그를 확인하세요.');
+    item := new System.Windows.Forms.ListViewItem(TLoc.S('msg.build.failed_check_log')); //'빌드 실패 — 출력 탭에서 전체 로그를 확인하세요.'
     item.ForeColor := System.Drawing.Color.Red;
     lvErrors.Items.Add(item);
   end;
@@ -2457,7 +2560,7 @@ begin
   trvSolution.BeginUpdate();
   trvSolution.Nodes.Clear();
   rootNode     := new System.Windows.Forms.TreeNode(
-    '솔루션 ' + #39 + fNamespace + #39 + ' (1개 프로젝트)');
+     TLoc.F('explorer.solution_root', fNamespace));//'솔루션 ' + #39 + fNamespace + #39 + ' (1개 프로젝트)');
   projNode     := new System.Windows.Forms.TreeNode(fNamespace);
   projNode.Tag := fProjectPath;
 
@@ -2534,14 +2637,21 @@ var
   buildItem, runItem, aboutItem, projOptItem         : System.Windows.Forms.ToolStripMenuItem;
   toolboxViewItem, explorerViewItem, propsViewItem   : System.Windows.Forms.ToolStripMenuItem;
   outputViewItem, errorsViewItem                     : System.Windows.Forms.ToolStripMenuItem;
+  toolsMenu, settingsItem                            : System.Windows.Forms.ToolStripMenuItem;
 begin
   menuStrip := new System.Windows.Forms.MenuStrip();
 
   // 파일
-  fileMenu := new System.Windows.Forms.ToolStripMenuItem('파일(&F)');
-  newItem  := new System.Windows.Forms.ToolStripMenuItem('새 프로젝트(&N)...');
-  openItem := new System.Windows.Forms.ToolStripMenuItem('열기(&O)...');
-  saveItem := new System.Windows.Forms.ToolStripMenuItem('저장(&S)');
+  // ※ 다국어: 텍스트는 생성자에 직접 넣지 않고 TLoc.Bind 로 키만 연결한다.
+  //   언어 전환 시 TLoc.SetLanguage 가 .Text 를 자동으로 갱신해 준다.
+  fileMenu := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(fileMenu, 'menu.file');
+  newItem  := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(newItem, 'menu.file.new');
+  openItem := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(openItem, 'menu.file.open');
+  saveItem := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(saveItem, 'menu.file.save');
   newItem.Click  += OnNewProject;
   openItem.Click += OnOpen;
   saveItem.Click += OnSave;
@@ -2550,15 +2660,20 @@ begin
   fileMenu.DropDownItems.Add(saveItem);
 
   // 프로젝트
-  projMenu    := new System.Windows.Forms.ToolStripMenuItem('프로젝트(&P)');
-  projOptItem := new System.Windows.Forms.ToolStripMenuItem('프로젝트 옵션(&O)...    Alt+Enter');
+  projMenu    := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(projMenu, 'menu.project');
+  projOptItem := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(projOptItem, 'menu.project.options');
   projOptItem.Click += OnProjectOptions;
   projMenu.DropDownItems.Add(projOptItem);
 
   // 보기
-  viewMenu  := new System.Windows.Forms.ToolStripMenuItem('보기(&V)');
-  applyItem := new System.Windows.Forms.ToolStripMenuItem('XAML 적용(&Y)');
-  syncItem  := new System.Windows.Forms.ToolStripMenuItem('XAML 동기화(&X)');
+  viewMenu  := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(viewMenu, 'menu.view');
+  applyItem := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(applyItem, 'menu.view.apply_xaml');
+  syncItem  := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(syncItem, 'menu.view.sync_xaml');
   applyItem.Click += OnApplyXamlMenu;
   syncItem.Click  += OnSyncXamlMenu;
   
@@ -2566,7 +2681,8 @@ begin
   viewMenu.DropDownItems.Add(syncItem);
   viewMenu.DropDownItems.Add(new System.Windows.Forms.ToolStripSeparator());
 
-  var splitOrientItem := new System.Windows.Forms.ToolStripMenuItem('디자인/XAML 분할 전환(&Z)');
+  var splitOrientItem := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(splitOrientItem, 'menu.view.split_orient');
   splitOrientItem.Click += (sender, e) ->
     begin
       if splitDesignXaml = nil then exit;
@@ -2579,28 +2695,33 @@ begin
   viewMenu.DropDownItems.Add(new System.Windows.Forms.ToolStripSeparator());    
 
   // ★ 변경: 분할 방향 토글 → 도킹 패널 표시/숨김 메뉴로 교체
-  toolboxViewItem        := new System.Windows.Forms.ToolStripMenuItem('도구 상자(&T)');
+  toolboxViewItem        := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(toolboxViewItem, 'menu.view.toolbox');
   toolboxViewItem.Click  += (sender, e) -> //procedure(sender: System.Object; e: System.EventArgs)
     begin
       if dockToolbox <> nil then begin dockToolbox.Show(); dockToolbox.Activate(); end;
     end;
 
-  explorerViewItem       := new System.Windows.Forms.ToolStripMenuItem('솔루션 탐색기(&E)');
+  explorerViewItem       := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(explorerViewItem, 'menu.view.explorer');
   explorerViewItem.Click += (sender, e) -> //procedure(sender: System.Object; e: System.EventArgs)
     begin
       if dockExplorer <> nil then begin dockExplorer.Show(); dockExplorer.Activate(); end;
     end;
-  propsViewItem          := new System.Windows.Forms.ToolStripMenuItem('속성(&P)');
+  propsViewItem          := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(propsViewItem, 'menu.view.properties');
   propsViewItem.Click    += (sender, e) -> //procedure(sender: System.Object; e: System.EventArgs)
     begin
       if dockProperties <> nil then begin dockProperties.Show(); dockProperties.Activate(); end;
     end;
-  outputViewItem         := new System.Windows.Forms.ToolStripMenuItem('출력(&O)');
+  outputViewItem         := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(outputViewItem, 'menu.view.output');
   outputViewItem.Click   += (sender, e) -> //procedure(sender: System.Object; e: System.EventArgs)
     begin
       if dockOutput <> nil then begin dockOutput.Show(); dockOutput.Activate(); end;
     end;
-  errorsViewItem         := new System.Windows.Forms.ToolStripMenuItem('오류 목록(&R)');
+  errorsViewItem         := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(errorsViewItem, 'menu.view.errors');
   errorsViewItem.Click   += (sender, e) -> //procedure(sender: System.Object; e: System.EventArgs)
     begin
       if dockErrors <> nil then begin dockErrors.Show(); dockErrors.Activate(); end;
@@ -2612,54 +2733,73 @@ begin
   viewMenu.DropDownItems.Add(errorsViewItem);
   viewMenu.DropDownItems.Add(new System.Windows.Forms.ToolStripSeparator());
 
-  menuItemResetLayout       := new System.Windows.Forms.ToolStripMenuItem('레이아웃 초기화(&L)');
+  menuItemResetLayout       := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(menuItemResetLayout, 'menu.view.reset_layout');
   menuItemResetLayout.Click += OnResetLayout;
   viewMenu.DropDownItems.Add(menuItemResetLayout);
   viewMenu.DropDownItems.Add(new System.Windows.Forms.ToolStripSeparator());
 
-  menuItemLineNum              := new System.Windows.Forms.ToolStripMenuItem('라인 번호(&L)');
+  menuItemLineNum              := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(menuItemLineNum, 'menu.view.line_numbers');
   menuItemLineNum.CheckOnClick := true;
   menuItemLineNum.Checked      := true;
   menuItemLineNum.Click        += OnToggleLineNumbers;
   viewMenu.DropDownItems.Add(menuItemLineNum);
 
-  menuItemHighlight              := new System.Windows.Forms.ToolStripMenuItem('구문 강조(&I)');
+  menuItemHighlight              := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(menuItemHighlight, 'menu.view.highlight');
   menuItemHighlight.CheckOnClick := true;
   menuItemHighlight.Checked      := true;
   menuItemHighlight.Click        += OnToggleHighlight;
   viewMenu.DropDownItems.Add(menuItemHighlight);
 
-  menuItemWordWrap              := new System.Windows.Forms.ToolStripMenuItem('자동 줄바꿈(&W)');
+  menuItemWordWrap              := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(menuItemWordWrap, 'menu.view.word_wrap');
   menuItemWordWrap.CheckOnClick := true;
   menuItemWordWrap.Checked      := false;
   menuItemWordWrap.Click        += OnToggleWordWrap;
   viewMenu.DropDownItems.Add(menuItemWordWrap);
 
-  menuItemFolding              := new System.Windows.Forms.ToolStripMenuItem('XML 폴딩(&D)');
+  menuItemFolding              := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(menuItemFolding, 'menu.view.folding');
   menuItemFolding.CheckOnClick := true;
   menuItemFolding.Checked      := true;
   menuItemFolding.Click        += OnToggleFolding;
   viewMenu.DropDownItems.Add(menuItemFolding);
 
   // 빌드
-  buildMenu := new System.Windows.Forms.ToolStripMenuItem('빌드(&B)');
-  buildItem := new System.Windows.Forms.ToolStripMenuItem('빌드(&B)    F6');
-  runItem   := new System.Windows.Forms.ToolStripMenuItem('실행(&R)    F5');
+  buildMenu := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(buildMenu, 'menu.build');
+  buildItem := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(buildItem, 'menu.build.build');
+  runItem   := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(runItem, 'menu.build.run');
   buildItem.Click += OnBuild;
   runItem.Click   += OnRun;
   buildMenu.DropDownItems.Add(buildItem);
   buildMenu.DropDownItems.Add(runItem);
 
   // 도움말
-  helpMenu        := new System.Windows.Forms.ToolStripMenuItem('도움말(&H)');
-  aboutItem       := new System.Windows.Forms.ToolStripMenuItem('정보(&A)...');
+  helpMenu        := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(helpMenu, 'menu.help');
+  aboutItem       := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(aboutItem, 'menu.help.about');
   aboutItem.Click += OnAbout;
   helpMenu.DropDownItems.Add(aboutItem);
+
+  // 서비스 (이미지 2번 참고: Сервис → Настройки...)
+  toolsMenu    := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(toolsMenu, 'menu.tools');
+  settingsItem := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(settingsItem, 'menu.tools.settings');
+  settingsItem.Click += OnSettings;
+  toolsMenu.DropDownItems.Add(settingsItem);
 
   menuStrip.Items.Add(fileMenu);
   menuStrip.Items.Add(projMenu);
   menuStrip.Items.Add(viewMenu);
   menuStrip.Items.Add(buildMenu);
+  menuStrip.Items.Add(toolsMenu);
   menuStrip.Items.Add(helpMenu);
   Self.Controls.Add(menuStrip);
   Self.MainMenuStrip := menuStrip;
@@ -2762,7 +2902,7 @@ begin
   fToolboxPanel.Background := System.Windows.Media.Brushes.White;
 
   title            := new System.Windows.Controls.TextBlock();
-  title.Text       := '도구 상자';
+  title.Text       :=  TLoc.S('toolbox.title'); //'도구 상자';
   title.FontSize   := 13;
   title.FontWeight := System.Windows.FontWeights.Bold;
   title.Padding    := new System.Windows.Thickness(6);
@@ -2778,7 +2918,7 @@ begin
   AddBtn(panelLayout, 'DockPanel',    'System.Windows.Controls.DockPanel');
   AddBtn(panelLayout, 'WrapPanel',    'System.Windows.Controls.WrapPanel');
   AddBtn(panelLayout, 'ScrollViewer', 'System.Windows.Controls.ScrollViewer');
-  expLayout         := MakeExpander('레이아웃');
+  expLayout         := MakeExpander(TLoc.S('toolbox.category.layout')); // '레이아웃'
   expLayout.Content := panelLayout;
   fToolboxPanel.Children.Add(expLayout);
 
@@ -2804,7 +2944,7 @@ begin
   AddBtn(panelCommon, 'Expander',    'System.Windows.Controls.Expander');
   AddBtn(panelCommon, 'DatePicker',  'System.Windows.Controls.DatePicker');
   AddBtn(panelCommon, 'PasswordBox', 'System.Windows.Controls.PasswordBox');
-  expCommon         := MakeExpander('공용 컨트롤');
+  expCommon         := MakeExpander(TLoc.S('toolbox.category.common')); // '공용 컨트롤'
   expCommon.Content := panelCommon;
   fToolboxPanel.Children.Add(expCommon);
 
@@ -2859,8 +2999,10 @@ begin
   trvSolution.NodeMouseDoubleClick += OnSolutionExplorerDoubleClick;
 
   var ctxMenu          := new System.Windows.Forms.ContextMenuStrip();
-  var refreshItem      := new System.Windows.Forms.ToolStripMenuItem('새로 고침(&R)');
-  var showInFolderItem := new System.Windows.Forms.ToolStripMenuItem('파일 탐색기에서 보기(&E)');
+  var refreshItem      := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(refreshItem, 'menu.explorer.refresh');
+  var showInFolderItem := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(showInFolderItem, 'menu.explorer.show_in_folder');
   refreshItem.Click      += OnSolutionExplorerRefresh;
   showInFolderItem.Click += OnSolutionExplorerShowInFolder;
   ctxMenu.Items.Add(refreshItem);
@@ -2889,13 +3031,23 @@ begin
   editorRow1.Height := new System.Windows.GridLength(1, System.Windows.GridUnitType.Star);
   editorGrid.RowDefinitions.Add(editorRow0);
   editorGrid.RowDefinitions.Add(editorRow1);
+{  
   applyBtn         := new System.Windows.Controls.Button();
-  applyBtn.Content := '▶ XAML 적용';
+  applyBtn.Content := TLoc.S('btn.apply_xaml');//'▶ XAML 적용';
   applyBtn.Height  := 28;
   applyBtn.Margin  := new System.Windows.Thickness(0, 0, 0, 2);
   applyBtn.Click   += OnApplyXaml;
   System.Windows.Controls.Grid.SetRow(applyBtn, 0);
   editorGrid.Children.Add(applyBtn);
+}
+  fApplyXamlBtn    := new System.Windows.Controls.Button();
+  fApplyXamlBtn.Content := TLoc.S('btn.apply_xaml');//'▶ XAML 적용';
+  fApplyXamlBtn.Height  := 28;
+  fApplyXamlBtn.Margin  := new System.Windows.Thickness(0, 0, 0, 2);
+  fApplyXamlBtn.Click   += OnApplyXaml;
+  System.Windows.Controls.Grid.SetRow(fApplyXamlBtn, 0);
+  editorGrid.Children.Add(fApplyXamlBtn);
+  
   System.Windows.Controls.Grid.SetRow(fXamlEditor, 1);
   editorGrid.Children.Add(fXamlEditor);
   hostXaml       := new System.Windows.Forms.Integration.ElementHost();
@@ -2932,9 +3084,9 @@ begin
   tabControl.Dock := System.Windows.Forms.DockStyle.Fill;
   tabControl.SelectedIndexChanged += OnTabChanged;
 
-  tabDesignXaml := new System.Windows.Forms.TabPage('🎨 디자인 + XAML');
+  tabDesignXaml := new System.Windows.Forms.TabPage(TLoc.S('tab.design_xaml')); // '🎨 디자인 + XAML'
   tabDesignXaml.Controls.Add(splitDesignXaml);
-  tabCode := new System.Windows.Forms.TabPage('💻 코드');
+  tabCode := new System.Windows.Forms.TabPage(TLoc.S('tab.code')); // '💻 코드'
   tabCode.Controls.Add(hostCode);
   tabControl.TabPages.Add(tabDesignXaml);
   tabControl.TabPages.Add(tabCode);
@@ -2949,17 +3101,18 @@ begin
   lvErrors.Font          := new System.Drawing.Font('Consolas', 9);
   lvErrors.KeyDown       += OnErrorsKeyDown;
   var errMenu  := new System.Windows.Forms.ContextMenuStrip();
-  var copyItem := new System.Windows.Forms.ToolStripMenuItem('복사(&C)' + #9 + 'Ctrl+C');
+  var copyItem := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(copyItem, 'menu.errors.copy');
   copyItem.Click += OnErrorsCopy;
   errMenu.Items.Add(copyItem);
   lvErrors.ContextMenuStrip := errMenu;
 
   colMsg := new System.Windows.Forms.ColumnHeader();
-  colMsg.Text := '오류 메시지'; colMsg.Width := 500;
+  TLoc.Bind(colMsg, 'col.errors.message'); colMsg.Width := 500;
   colLine := new System.Windows.Forms.ColumnHeader();
-  colLine.Text := '줄'; colLine.Width := 60;
+  TLoc.Bind(colLine, 'col.errors.line'); colLine.Width := 60;
   colFile := new System.Windows.Forms.ColumnHeader();
-  colFile.Text := '파일'; colFile.Width := 200;
+  TLoc.Bind(colFile, 'col.errors.file'); colFile.Width := 200;
   lvErrors.Columns.Add(colMsg);
   lvErrors.Columns.Add(colLine);
   lvErrors.Columns.Add(colFile);
@@ -2975,8 +3128,10 @@ begin
   txtOutput.WordWrap       := true;
   txtOutput.HideSelection  := false;
   var outMenu  := new System.Windows.Forms.ContextMenuStrip();
-  var outCopy  := new System.Windows.Forms.ToolStripMenuItem('복사(&C)' + #9 + 'Ctrl+C');
-  var outClear := new System.Windows.Forms.ToolStripMenuItem('지우기(&L)');
+  var outCopy  := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(outCopy, 'menu.output.copy');
+  var outClear := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(outClear, 'menu.output.clear');
   outCopy.Click  += OnOutputCopy;
   outClear.Click += OnOutputClear;
   outMenu.Items.Add(outCopy); outMenu.Items.Add(outClear);
@@ -3053,7 +3208,19 @@ begin
   while (i < asms.Length) and (t = nil) do
   begin t := asms[i].GetType(tname); i += 1; end;
   if t = nil then
-  begin System.Windows.Forms.MessageBox.Show('타입 없음: ' + tname); exit; end;
+  begin
+{   
+    System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.type_not_found', [tname]),
+      TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
+      System.Windows.Forms.MessageBoxIcon.Error);
+}
+      // ✅ 수정
+    System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.type_not_found', tname),
+      TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
+      System.Windows.Forms.MessageBoxIcon.Error);
+ 
+    exit;
+  end;
   try
     var inst     := System.Activator.CreateInstance(t);
     if inst = nil then exit;
@@ -3074,7 +3241,16 @@ begin
     SyncXamlEditor();
   except
     on ex: System.Exception do
-      System.Windows.Forms.MessageBox.Show('컨트롤 추가 실패: ' + ex.Message);
+{      
+      System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.add_control', [ex.Message]),
+        TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
+        System.Windows.Forms.MessageBoxIcon.Error);
+}
+      // ✅ 수정
+      System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.add_control', ex.Message),
+        TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
+        System.Windows.Forms.MessageBoxIcon.Error);
+        
   end;
 end;
 
@@ -3130,25 +3306,73 @@ end;
 procedure Form1.OnAbout(sender: System.Object; e: System.EventArgs);
 begin
   System.Windows.Forms.MessageBox.Show(
-    'PascalABC-WPF-Designer Ver 2.2.4' + System.Environment.NewLine + System.Environment.NewLine +
-    '■ 리팩토링 구조' + System.Environment.NewLine +
-    '  Models/   : ProjectOptions, ControlInfo' + System.Environment.NewLine +
-    '  Events/   : WpfEventMap' + System.Environment.NewLine +
-    '  Editor/   : PascalHighlighting, PascalFolding' + System.Environment.NewLine +
-    '  CodeGen/  : XamlParser, XamlPreprocessor, PascalCodeGenerator' + System.Environment.NewLine +
-    '  Docking/  : DockContents (DockPanelSuite)' + System.Environment.NewLine +
-    '  Form1.pas : UI + 이벤트 핸들러 + 빌드/실행' + System.Environment.NewLine + System.Environment.NewLine +
-    '■ 주요 기능' + System.Environment.NewLine +
-    '  · Pascal/PascalABC.NET 구문 강조 (XSHD)' + System.Environment.NewLine +
-    '  · begin/end 블록 폴딩' + System.Environment.NewLine +
-    '  · 프로젝트 옵션 (Alt+Enter)' + System.Environment.NewLine +
-    '  · DockPanelSuite 기반 도킹 레이아웃 (도구상자/탐색기/속성/출력/오류 최소화 가능)' + System.Environment.NewLine + System.Environment.NewLine +
-    'Built with PascalABC.NET 3.11.1.3833' + System.Environment.NewLine +
-    'ICSharpCode.WpfDesign + AvalonEdit + DockPanelSuite' + System.Environment.NewLine + System.Environment.NewLine +
-    'made by sigmak (dwfree74@gmail.com) with claude.ai',
-    '정보',
+    TLoc.S('dlg.about.body'),
+    TLoc.S('title.info'),
     System.Windows.Forms.MessageBoxButtons.OK,
     System.Windows.Forms.MessageBoxIcon.Information);
+end;
+
+// =============================================================================
+// 설정 다이얼로그 (다국어 / IDE 전역 설정)
+// =============================================================================
+procedure Form1.OnSettings(sender: System.Object; e: System.EventArgs);
+begin
+  // 언어 전환은 SettingsDialog 내부에서 즉시 TLoc.SetLanguage 로 처리되고
+  // (Bind 된 메뉴/위젯이 전부 자동 갱신됨), 폼 제목처럼 prefix/suffix가
+  // 붙어서 자동 갱신이 안 되는 부분만 이 콜백에서 직접 재설정한다.
+  TSettingsDialog.Show(Self, OnSettingsLanguageChanged);
+end;
+
+procedure Form1.OnSettingsLanguageChanged;
+begin
+  // 폼 제목
+  if fProjectPath <> '' then
+    Self.Text := TLoc.S('title.main_app') + ' — ' + fProjectPath
+  else
+    Self.Text := TLoc.S('title.main_app');
+
+  // 탭 제목
+  if tabDesignXaml <> nil then
+    tabDesignXaml.Text := TLoc.S('tab.design_xaml');
+  if tabCode <> nil then
+    tabCode.Text := TLoc.S('tab.code');
+
+  // DockContent 창 제목 갱신  ← 추가
+  if dockToolbox    <> nil then dockToolbox.Text    := TLoc.S('dock.toolbox');
+  if dockExplorer   <> nil then dockExplorer.Text   := TLoc.S('dock.explorer');
+  if dockProperties <> nil then dockProperties.Text := TLoc.S('dock.properties');
+  if dockOutput     <> nil then dockOutput.Text     := TLoc.S('dock.output');
+  if dockErrors     <> nil then dockErrors.Text     := TLoc.S('dock.errors');
+  if dockMain       <> nil then dockMain.Text       := TLoc.S('dock.editor');
+
+
+  // XAML 적용 버튼 갱신
+  if fApplyXamlBtn <> nil then
+    fApplyXamlBtn.Content := TLoc.S('btn.apply_xaml');
+
+  // 솔루션 탐색기 루트 노드 갱신
+  RefreshSolutionExplorer();
+  
+  // 툴박스 내부 텍스트 갱신  ← 추가
+  if fToolboxPanel <> nil then
+  begin
+    var tb := fToolboxPanel.Children[0] as System.Windows.Controls.TextBlock;
+    if tb <> nil then tb.Text := TLoc.S('toolbox.title');
+
+    var expLayout := fToolboxPanel.Children[1] as System.Windows.Controls.Expander;
+    if expLayout <> nil then
+    begin
+      var hdr := expLayout.Header as System.Windows.Controls.TextBlock;
+      if hdr <> nil then hdr.Text := TLoc.S('toolbox.category.layout');
+    end;
+
+    var expCommon := fToolboxPanel.Children[2] as System.Windows.Controls.Expander;
+    if expCommon <> nil then
+    begin
+      var hdr := expCommon.Header as System.Windows.Controls.TextBlock;
+      if hdr <> nil then hdr.Text := TLoc.S('toolbox.category.common');
+    end;
+  end;
 end;
 
 // =============================================================================
@@ -3157,6 +3381,17 @@ end;
 begin
   System.Threading.Thread.CurrentThread.SetApartmentState(
     System.Threading.ApartmentState.STA);
+
+  // ── 다국어 테이블 초기화 ────────────────────────────────────────────────
+  // 새 기능 모듈을 추가할 때는 Strings_<기능명>.RegisterAll; 한 줄만 이 목록에 추가.
+  TLoc.Init;
+  TStrings_Common.RegisterAll;
+  TStrings_Messages.RegisterAll;
+
+  // 마지막으로 저장된 언어를 %AppData%\PascalABC-WPF-Designer\settings.ini 에서 로드.
+  // 저장된 값이 없으면 LoadLanguage 가 기본값(Korean)을 반환한다.
+  TLoc.SetLanguage(AppSettings.TAppSettings.LoadLanguage);
+
   System.Windows.Forms.Application.EnableVisualStyles();
   System.Windows.Forms.Application.Run(new Form1());
 end.

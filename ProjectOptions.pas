@@ -4,6 +4,7 @@
 // ProjectOptions.pas
 //   TProjectType 열거형과 TProjectOptions 클래스 정의
 // =============================================================================
+interface
 
 type
   TProjectType = (ptWpfApp, ptWpfControlLibrary);
@@ -77,6 +78,8 @@ type
     procedure SaveToFile(const path: string);
     procedure LoadFromFile(const path: string);
   end;
+  
+implementation  
 
 constructor TProjectOptions.Create;
 begin

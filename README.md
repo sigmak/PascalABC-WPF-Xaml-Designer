@@ -7,6 +7,18 @@ PascalABC.net 개발툴을 활용한 pascal wpf xaml Designer
 4. DockPanelSuite             : https://www.nuget.org/api/v2/package/DockPanelSuite/3.1.0
 5. DockPanelSuite.ThemeVS2015 : https://www.nuget.org/packages/DockPanelSuite.ThemeVS2015/
 
+[Ver 2.2.5]
+* Multilingual support available in Korean, English, and Russian.
+
+<img src='https://github.com/sigmak/PascalABC-WPF-Xaml-Designer/blob/main/screenshot/ver-2-2-5.png' />
+<img src='https://github.com/sigmak/PascalABC-WPF-Xaml-Designer/blob/main/screenshot/ver-2-2-5B.png' />
+<img src='https://github.com/sigmak/PascalABC-WPF-Xaml-Designer/blob/main/screenshot/ver-2-2-5C.png' />
+<img src='https://github.com/sigmak/PascalABC-WPF-Xaml-Designer/blob/main/screenshot/ver-2-2-5D.png' />
+
+
+
+
+
 [Ver 2.2.4]
 * Project Options UI Controls 위치 수정
   

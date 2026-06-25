@@ -7,6 +7,19 @@ PascalABC.net 개발툴을 활용한 pascal wpf xaml Designer
 4. DockPanelSuite             : https://www.nuget.org/api/v2/package/DockPanelSuite/3.1.0
 5. DockPanelSuite.ThemeVS2015 : https://www.nuget.org/packages/DockPanelSuite.ThemeVS2015/
 
+
+[Ver 2.2.6]
+* 컨트롤 속성창 옆에 이벤트 속성창 추가
+
+* 선택된 컨트롤에 대한 이벤트 속성창을 다른 개발툴 처럼 더블클릭해서 사용하는 기능추가
+
+* 이 프로그램(PascalABC-WPF-Designer) 실행시 표시되는 버전을 한곳에서 관리
+
+<img src='https://github.com/sigmak/PascalABC-WPF-Xaml-Designer/blob/main/screenshot/ver-2-2-6.png' />
+
+
+
+
 [Ver 2.2.5]
 * Multilingual support available in Korean, English, and Russian.
 
@@ -14,9 +27,6 @@ PascalABC.net 개발툴을 활용한 pascal wpf xaml Designer
 <img src='https://github.com/sigmak/PascalABC-WPF-Xaml-Designer/blob/main/screenshot/ver-2-2-5B.png' />
 <img src='https://github.com/sigmak/PascalABC-WPF-Xaml-Designer/blob/main/screenshot/ver-2-2-5C.png' />
 <img src='https://github.com/sigmak/PascalABC-WPF-Xaml-Designer/blob/main/screenshot/ver-2-2-5D.png' />
-
-
-
 
 
 [Ver 2.2.4]

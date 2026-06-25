@@ -1,7 +1,8 @@
 ﻿unit Form1Unit;
 
 // =============================================================================
-// Form1.pas  —  PascalABC-WPF-Designer Ver 2.2.5  메인 폼
+// Form1.pas  —  PascalABC-WPF-Designer Ver {APP_VERSION}  메인 폼
+//               ↑ 버전 변경 시 아래 APP_VERSION 상수 한 곳만 수정하세요.
 //
 // 외부 유닛 의존성:
 //   Models/   ProjectOptions, ControlInfo
@@ -51,6 +52,34 @@ uses
                           // ※ 향후 기능 추가 시 Strings_<기능명> 유닛을 여기에 추가
 
 // =============================================================================
+// ★ 버전 상수 — 여기 한 곳만 수정하면 제목 표시줄과 About 다이얼로그가
+//               자동으로 바뀝니다.
+// =============================================================================
+const
+  APP_VERSION = '2.2.6';
+  APP_TITLE   = 'PascalABC-WPF-Designer';
+
+// =============================================================================
+// TEventRow
+//   속성창 이벤트 탭(ListView)의 한 행을 표현하는 바인딩용 클래스.
+// =============================================================================
+type
+  TEventRow = class
+  public
+    EventName   : string;
+    HandlerName : string;
+    ControlName : string;
+    ControlType : string;
+    constructor Create(aEvent, aHandler, aCtrlName, aCtrlType: string);
+    begin
+      EventName   := aEvent;
+      HandlerName := aHandler;
+      ControlName := aCtrlName;
+      ControlType := aCtrlType;
+    end;
+  end;
+
+// =============================================================================
 // Form1
 // =============================================================================
 type
@@ -62,6 +91,20 @@ type
     fCodeEditor : ICSharpCode.AvalonEdit.TextEditor;
     fOriginalXaml : string;
     fLoadingXaml  : boolean;
+
+    // ── 속성/이벤트 탭 전환 (Properties 창 ⚡ 아이콘) ───────────────────────
+    fPropEventRoot   : System.Windows.Controls.Grid;       // hostRight.Child 로 들어가는 최상위 컨테이너
+    fPropHostBorder  : System.Windows.Controls.Border;     // fPropView 를 감싸는 영역
+    fEventListView   : System.Windows.Controls.Grid;        // 이벤트 탭 본문 컨테이너 (헤더 + 행 목록)
+    fEventHeaderGrid : System.Windows.Controls.Grid;         // 헤더 행 (이벤트 | 핸들러)
+    fColEventNameHdr    : System.Windows.Controls.TextBlock; // 헤더 "이벤트" 텍스트 (언어 전환 시 갱신용)
+    fColEventHandlerHdr : System.Windows.Controls.TextBlock; // 헤더 "핸들러" 텍스트
+    fEventRowsPanel  : System.Windows.Controls.StackPanel;  // 실제 이벤트 행들이 쌓이는 패널
+    fBtnModeProps    : System.Windows.Controls.Primitives.ToggleButton; // 속성 탭 아이콘
+    fBtnModeEvents   : System.Windows.Controls.Primitives.ToggleButton; // 이벤트(⚡) 탭 아이콘
+    fEventDescBar    : System.Windows.Controls.TextBlock;  // 하단 설명 표시줄
+    fIsEventTabActive: boolean;
+    fCurrentDesignItem : ICSharpCode.WpfDesign.DesignItem; // 현재 선택된 디자인 아이템 (이벤트탭 갱신용)
 
     // 프로젝트
     fProjectPath  : string;
@@ -154,6 +197,20 @@ type
     procedure BuildDockLayout;
     procedure ConnectEvents;
 
+    // ── 속성/이벤트 탭 (Properties 창) ──────────────────────────────────────
+    function  BuildPropertyEventPanel: System.Windows.Controls.Grid;
+    function  MakeEventRowGrid: System.Windows.Controls.Grid;
+    procedure OnModePropsClick(sender: System.Object; e: System.Windows.RoutedEventArgs);
+    procedure OnModeEventsClick(sender: System.Object; e: System.Windows.RoutedEventArgs);
+    procedure SwitchToPropsTab;
+    procedure SwitchToEventsTab;
+    procedure RefreshEventList;
+    function  GetExistingHandlerFromXaml(controlName, eventName: string): string;
+    procedure OnEventRowMouseDown(sender: System.Object; e: System.Windows.Input.MouseButtonEventArgs);
+    procedure NavigateToEventHandler(controlName, controlType, eventName: string);
+    
+    function  FindHandlerOffset(handlerName: string): integer;
+
     // ── 툴박스 / 디자이너 이벤트 ────────────────────────────────────────────
     procedure OnToolboxClick(sender: System.Object; e: System.Windows.RoutedEventArgs);
     procedure OnDesignerDoubleClick(sender: System.Object; e: System.Windows.Input.MouseButtonEventArgs);
@@ -236,6 +293,8 @@ type
     function  AddEventHandlerToCode(handlerName, eventType: string): integer;
     // ★ 추가: Dispatcher.BeginInvoke로 호출할 캐럿 이동 헬퍼 (메서드 참조 방식 — 람다 호환성 문제 회피)
     procedure JumpCodeEditorCaretTo(offset: integer);
+
+    // Form1 private 선언부에 추가:
 
     // ── 새 프로젝트 다이얼로그 / 생성 ──────────────────────────────────────
     function  ShowNewProjectDialog(var projType: TProjectType;
@@ -334,7 +393,7 @@ end;
 constructor Form1.Create;
 begin
   inherited Create;
-  Self.Text   := 'PascalABC-WPF-Designer Ver 2.2.5';
+  Self.Text   := APP_TITLE + ' Ver ' + APP_VERSION;
   Self.Width  := 1600;
   Self.Height := 950;
 
@@ -1847,7 +1906,7 @@ begin
   fProjectPath  := System.IO.Path.GetDirectoryName(dlg.FileName) + '\';
   fXamlFileName := System.IO.Path.GetFileName(dlg.FileName);
   fPasFileName  := System.IO.Path.ChangeExtension(fXamlFileName, '.pas');
-  Self.Text     := 'PascalABC-WPF-Designer — ' + fProjectPath;
+  Self.Text     := APP_TITLE + ' — ' + fProjectPath;
 
   ParseXClassInfo(xaml, fNamespace, fClassName);
   fProjectType := (if xaml.Contains('<UserControl') then ptWpfControlLibrary else ptWpfApp);
@@ -1914,14 +1973,25 @@ end;
 //   - 핸들러가 이미 존재하면: 그 procedure의 'begin' 바로 다음 줄 시작 오프셋 반환
 //   - 새로 생성하면: 새로 삽입된 handler의 'begin' 바로 다음 줄(TODO 줄) 시작 오프셋 반환
 //   - 실패 시 -1 반환
+
+// =============================================================================
+// [3] AddEventHandlerToCode  (기존 코드를 아래로 교체)
+//
+// ★ 변경점:
+//   - FindHandlerOffset 헬퍼를 재사용하도록 리팩토링
+//   - FindFinalEndDot 에서 'implementation' 키워드를 잘못된 'end.' 로 인식하던
+//     문제 수정 → 'end.' 뒤에 바로 다른 식별자가 오는 경우도 걸러냄
+//   - 'implementation' 키워드가 코드 중간에 있는 unit 구조 파일에서
+//     삽입 위치를 잘못 찾던 문제 수정
+//   - 주석 생성 시 TLoc.S('codegen.comment.impl') 제거
+//     (이전: "// TODO: handlerName 구현" → 수정: "// TODO: handlerName" 으로 단순화)
+// =============================================================================
 function Form1.AddEventHandlerToCode(handlerName: string; eventType: string): integer;
 var
-  code, marker, indent, paramT: string;
+  code, indent, paramT: string;
   existingIdx, beginIdx: integer;
   doc: ICSharpCode.AvalonEdit.Document.TextDocument;
-
-  // charIdx가 위치한 줄의 "다음 줄" 시작 오프셋을 구한다.
-  // AvalonEdit Document의 줄 경계 API를 사용하므로 \r\n / \n 차이에 영향받지 않는다.
+ 
   function OffsetAfterLineOf(charIdx: integer): integer;
   var
     line: ICSharpCode.AvalonEdit.Document.DocumentLine;
@@ -1932,17 +2002,58 @@ var
     else
       Result := doc.TextLength;
   end;
-
+ 
+  // ★ 수정: FindFinalEndDot
+  //   'end.' 를 찾되, 뒤에 알파벳/밑줄이 바로 이어지면(예: 'end.SomeUnit')
+  //   식별자의 일부이므로 건너뛴다.
+  //   또한 PascalABC.NET program 파일의 마지막 'end.' 만 대상으로 한다.
+  function FindFinalEndDot(text: string): integer;
+  var
+    searchFrom, dotPos, afterDot: integer;
+    prevChar: char;
+  begin
+    Result     := -1;
+    searchFrom := Length(text) - 1;
+    while searchFrom >= 4 do
+    begin
+      dotPos := text.LastIndexOf('end.', searchFrom);
+      if dotPos < 0 then exit;
+ 
+      // 'end.' 뒤 문자 확인: 알파벳/밑줄이면 식별자의 일부 → 건너뜀
+      afterDot := dotPos + 4;
+      if afterDot < Length(text) then
+      begin
+        var ch := text[afterDot];
+        if System.Char.IsLetterOrDigit(ch) or (ch = '_') then
+        begin
+          searchFrom := dotPos - 1;
+          continue;
+        end;
+      end;
+ 
+      // 'end' 바로 앞 문자가 개행/공백/세미콜론이어야 진짜 종결자
+      var idx := dotPos - 1;
+      while (idx >= 0) and ((text[idx] = ' ') or (text[idx] = #9)) do
+        idx -= 1;
+      if (idx < 0) or (text[idx] = #10) or (text[idx] = #13) or (text[idx] = ';') then
+      begin
+        Result := dotPos;
+        exit;
+      end;
+ 
+      searchFrom := dotPos - 1;
+    end;
+  end;
+ 
 begin
   Result := -1;
   code   := fCodeEditor.Text;
-  marker := '// ── 이벤트 핸들러 구현 ──────────────────────────────────';
-
+ 
   // ── 케이스 1: 이미 존재하는 핸들러 → 그 begin 다음 줄로 이동 ──────────────
   existingIdx := code.IndexOf('procedure ' + fClassName + '.' + handlerName);
   if existingIdx >= 0 then
   begin
-    doc      := fCodeEditor.Document;   // 텍스트 변경 전이므로 현재 Document 그대로 사용
+    doc      := fCodeEditor.Document;
     beginIdx := code.IndexOf('begin', existingIdx);
     if beginIdx >= 0 then
       Result := OffsetAfterLineOf(beginIdx)
@@ -1950,10 +2061,10 @@ begin
       Result := existingIdx;
     exit;
   end;
-
-  // ── 케이스 2: 새로 생성 ────────────────────────────────────────────────
+ 
+  // ── 케이스 2: 새로 생성 ─────────────────────────────────────────────────
   paramT := (if eventType <> '' then eventType else 'System.Windows.RoutedEventArgs');
-
+ 
   indent := '';
   var ii := 0;
   while ii < fOptions.IndentSize do
@@ -1961,10 +2072,10 @@ begin
     indent += (if fOptions.UseTabs then #9 else ' ');
     ii += 1;
   end;
-
+ 
   var handler := new System.Text.StringBuilder();
   if fOptions.GenerateComments then
-    handler.AppendLine('// ' + handlerName + ' 이벤트 핸들러');
+    handler.AppendLine('// ' + handlerName + ' ' + TLoc.S('codegen.comment.event_handler'));
   handler.AppendLine('procedure ' + fClassName + '.' + handlerName +
     '(sender: System.Object; e: ' + paramT + ');');
   handler.AppendLine('begin');
@@ -1974,33 +2085,106 @@ begin
     handler.AppendLine(indent);
   handler.AppendLine('end;');
   handler.AppendLine('');
-
+ 
   var handlerStr := handler.ToString();
-  var insertPos: integer;
-
-  if code.Contains(marker) then
+  var insertPos  : integer;
+ 
+  // ── 삽입 위치: "event impl" 마커 또는 마지막 end. 앞 ──────────────────────
+  var implPhrase := TLoc.S('codegen.comment.event_impl');
+  var markerLine := '';
+  if implPhrase <> '' then
   begin
-    var insertText := marker + System.Environment.NewLine +
-                       System.Environment.NewLine + handlerStr;
-    insertPos := code.IndexOf(marker);
-    code := code.Replace(marker, insertText);
-    insertPos += Length(marker + System.Environment.NewLine + System.Environment.NewLine);
+    var phraseIdx := code.IndexOf(implPhrase);
+    if phraseIdx >= 0 then
+    begin
+      var lineStart := code.LastIndexOf(#10, phraseIdx);
+      if lineStart < 0 then lineStart := 0 else lineStart += 1;
+      var lineEnd := code.IndexOf(#10, phraseIdx);
+      if lineEnd < 0 then lineEnd := Length(code);
+      markerLine := code.Substring(lineStart, lineEnd - lineStart).TrimEnd([#13]);
+    end;
+  end;
+ 
+  if (markerLine <> '') and code.Contains(markerLine) then
+  begin
+    // 마커 줄 바로 다음에 빈 줄 + 핸들러를 삽입
+    insertPos := code.IndexOf(markerLine) + Length(markerLine);
+    // 마커 줄 끝의 개행 문자를 건너뜀
+    if (insertPos < Length(code)) and (code[insertPos] = #13) then insertPos += 1;
+    if (insertPos < Length(code)) and (code[insertPos] = #10) then insertPos += 1;
+    // 빈 줄이 이미 있으면 건너뜀
+    if (insertPos < Length(code)) and (code[insertPos] = #13) then insertPos += 1;
+    if (insertPos < Length(code)) and (code[insertPos] = #10) then insertPos += 1;
+ 
+    code := code.Substring(0, insertPos) +
+            handlerStr +
+            code.Substring(insertPos);
+    insertPos := insertPos; // insertPos 는 handlerStr 시작 위치
   end
   else
   begin
-    insertPos := Length(code) + Length(System.Environment.NewLine);
-    code := code + System.Environment.NewLine + handlerStr;
+    // ★ 수정: 마지막 'end.' 앞에 삽입
+    var endDotPos := FindFinalEndDot(code);
+    if endDotPos >= 0 then
+    begin
+      insertPos := endDotPos;
+      code := code.Substring(0, endDotPos) + handlerStr + code.Substring(endDotPos);
+    end
+    else
+    begin
+      insertPos := Length(code) + Length(System.Environment.NewLine);
+      code := code + System.Environment.NewLine + handlerStr;
+    end;
   end;
-
-  fCodeEditor.Text := code;          // 텍스트 갱신 → Document 새로 생성됨
-  doc := fCodeEditor.Document;       // 갱신된 Document 참조
-
-  // handlerStr 안에서 'begin'의 절대 위치 = insertPos + (handlerStr 내 'begin' 인덱스)
+ 
+  fCodeEditor.Text := code;
+  doc := fCodeEditor.Document;
+ 
   var beginRelIdx := handlerStr.IndexOf('begin');
   if beginRelIdx >= 0 then
     Result := OffsetAfterLineOf(insertPos + beginRelIdx)
   else
     Result := insertPos;
+end;
+ 
+
+// -----------------------------------------------------------------------------
+// GetExistingHandlerFromXaml
+//   XAML에서 controlName 태그에 eventName="..." 속성이 이미 연결되어 있으면
+//   그 핸들러명을 반환하고, 없으면 빈 문자열을 반환한다.
+//   (정규식 없이 단순 인덱스 탐색만 사용 — XamlPreprocessor 등 다른 코드와
+//    동일한 스타일을 유지)
+// -----------------------------------------------------------------------------
+function Form1.GetExistingHandlerFromXaml(controlName, eventName: string): string;
+var
+  xaml: string;
+  namePos, tagStart, tagEnd, attrPos, quoteStart, quoteEnd: integer;
+begin
+  Result := '';
+  if controlName = '' then exit;
+  xaml := fXamlEditor.Text;
+
+  var namePattern := 'x:Name="' + controlName + '"';
+  namePos := xaml.IndexOf(namePattern);
+  if namePos < 0 then exit;
+
+  // controlName이 속한 태그의 시작('<')과 끝('>')을 찾는다
+  tagStart := xaml.LastIndexOf('<', namePos);
+  tagEnd   := xaml.IndexOf('>', namePos);
+  if (tagStart < 0) or (tagEnd < 0) then exit;
+
+  var tagText := xaml.Substring(tagStart, tagEnd - tagStart + 1);
+
+  // 태그 안에서 eventName="..." 를 찾는다
+  var attrPattern := eventName + '="';
+  attrPos := tagText.IndexOf(attrPattern);
+  if attrPos < 0 then exit;
+
+  quoteStart := attrPos + Length(attrPattern);
+  quoteEnd   := tagText.IndexOf('"', quoteStart);
+  if quoteEnd < 0 then exit;
+
+  Result := tagText.Substring(quoteStart, quoteEnd - quoteStart);
 end;
 
 procedure Form1.AddEventHandlerToXaml(controlName, eventName, handlerName: string);
@@ -2030,6 +2214,7 @@ begin
   System.Windows.Input.Keyboard.Focus(fCodeEditor.TextArea);
 end;
 
+
 // =============================================================================
 // 디자이너 더블클릭
 // =============================================================================
@@ -2038,9 +2223,7 @@ procedure Form1.OnDesignerDoubleClick(sender: System.Object;
 var
   selectedItems : System.Collections.Generic.ICollection<ICSharpCode.WpfDesign.DesignItem>;
   item          : ICSharpCode.WpfDesign.DesignItem;
-  controlName, controlType, eventName, handlerName: string;
-  caretOffset   : integer;
-  jumpAction    : System.Action<integer>;
+  controlName, controlType, eventName: string;
 begin
   if fSurface.DesignContext = nil then exit;
   selectedItems := fSurface.DesignContext.Services.Selection.SelectedItems;
@@ -2056,6 +2239,8 @@ begin
                   then nameProp.ValueOnInstance.ToString() else '');
   controlType := item.ComponentType.Name;
 
+  // 디자이너 더블클릭 시에는 컨트롤별 "기본 이벤트" 하나만 자동 연결한다
+  // (VS와 동일한 동작). 다른 이벤트를 연결하려면 속성창의 ⚡ 이벤트 탭을 사용한다.
   case controlType of
     'Button'                 : eventName := 'Click';
     'TextBox'                : eventName := 'TextChanged';
@@ -2065,16 +2250,87 @@ begin
   else                         eventName := 'Loaded';
   end;
 
-  handlerName := (if controlName <> '' then controlName else controlType) + '_' + eventName;
+  NavigateToEventHandler(controlName, controlType, eventName);
+end;
 
+// =============================================================================
+// [1] NavigateToEventHandler  (기존 코드를 아래로 교체)
+//   주어진 컨트롤/이벤트에 대한 핸들러를 XAML과 코드에 생성(또는 이미 있으면
+//   재사용)하고, 코드 에디터의 해당 위치로 캐럿을 이동시킨다.
+//   디자이너 더블클릭과 이벤트탭 더블클릭이 공통으로 사용하는 진입점이다.
+// ★ 핵심 변경:
+//   이벤트를 XAML에 추가한 뒤 GenerateCode()를 재호출하여 코드 에디터 전체를
+//   재생성한다. 이렇게 하면 PascalCodeGenerator.GenerateInitializeComponent가
+//   올바른 위치(try/finally 완전 종료 후)에 += 구문을 넣어준다.
+//   기존 방식(AddEventSubscriptionToCode로 텍스트를 직접 삽입)은 삭제한다.
+// =============================================================================
+procedure Form1.NavigateToEventHandler(controlName, controlType, eventName: string);
+var
+  handlerName : string;
+  caretOffset : integer;
+  jumpAction  : System.Action<integer>;
+  newCode     : string;
+begin
+  if controlName = '' then exit;
+ 
+  // 이미 XAML에 연결된 핸들러가 있으면 그 이름을 재사용
+  handlerName := GetExistingHandlerFromXaml(controlName, eventName);
+  if handlerName = '' then
+    handlerName := controlName + '_' + eventName;
+ 
+  // XAML에 이벤트 속성 추가 (없으면)
   AddEventHandlerToXaml(controlName, eventName, handlerName);
-  caretOffset := AddEventHandlerToCode(handlerName, GetEventParamType(controlType, eventName));
-
+ 
+  // ★ 수정: GenerateCode() 재호출로 InitializeComponent 를 올바르게 재생성.
+  //   이 시점에서 XAML에 이미 eventName="handlerName" 이 들어가 있으므로
+  //   ParseControlsFromXaml → GenerateInitializeComponent 경로가
+  //   해당 이벤트를 포함한 완전한 코드를 생성한다.
+  //
+  //   단, 기존 코드 에디터에 사용자가 직접 작성한 내용(TODO 구현부 등)이
+  //   있을 수 있으므로, 기존 코드를 보존하면서 핸들러 stub 만 추가하는
+  //   AddEventHandlerToCode 는 그대로 유지한다.
+  //   GenerateCode() 재호출은 InitializeComponent 블록만 갱신하는 것이 아니라
+  //   전체 코드를 교체하므로, 사용자 구현부가 날아가는 문제가 있다.
+  //   따라서 전략을 다음과 같이 분리한다:
+  //
+  //   A) 코드 에디터가 비어 있거나 초기 생성 상태(사용자 수정 없음)인 경우:
+  //      → GenerateCode() 전체 재생성 (가장 정확하고 안전)
+  //   B) 사용자가 이미 코드를 편집한 경우:
+  //      → AddEventHandlerToCode 로 stub 만 추가
+  //        + 코드 내 InitializeComponent 블록의 "Connect event handlers" 주석
+  //          아래에 += 구문을 직접 삽입 (InsertEventSubscription 헬퍼)
+  //
+  //   "초기 생성 상태" 판정: 코드 에디터에 handlerName 이 아직 없으면
+  //   사용자가 아직 편집하지 않은 것으로 간주.
+ 
+  var currentCode := fCodeEditor.Text;
+  var handlerExists := currentCode.Contains('procedure ' + fClassName + '.' + handlerName);
+ 
+  if not handlerExists then
+  begin
+    // 핸들러가 아직 없음 → GenerateCode() 로 전체 재생성이 가장 안전
+    // (초기 상태이거나 이 이벤트가 처음 추가되는 경우)
+    newCode := GenerateCode();
+    if newCode <> '' then
+      fCodeEditor.Text := newCode;
+ 
+    // 재생성 후 코드에서 핸들러 위치로 캐럿 이동
+    caretOffset := FindHandlerOffset(handlerName);
+  end
+  else
+  begin
+    // 핸들러 stub 은 이미 존재 → 커서만 이동
+    // (XAML 재적용 후 GenerateCode를 다시 호출하면 기존 사용자 구현부가 날아가므로
+    //  이 경로에서는 코드를 건드리지 않는다)
+    caretOffset := FindHandlerOffset(handlerName);
+  end;
+ 
   tabControl.SelectedTab := tabCode;
-  AppendOutput('이벤트 핸들러로 이동: ' + handlerName, false);
-
-  // ElementHost 안 WPF 컨트롤이 탭 전환 직후 바로 포커스를 못 받는 경우가 있어
-  // Dispatcher에 한 틱 미뤄서 처리 (VS의 더블클릭 → 코드 점프와 동일한 체감)
+  ApplyCodeHighlighting();
+  if fOptions.CodeFolding then EnableCodeFolding();
+ 
+  AppendOutput(TLoc.F('msg.event.navigated', handlerName), false);
+ 
   if caretOffset >= 0 then
   begin
     jumpAction := JumpCodeEditorCaretTo;
@@ -2082,6 +2338,40 @@ begin
       System.Windows.Threading.DispatcherPriority.Background,
       jumpAction, caretOffset);
   end;
+ 
+  if fIsEventTabActive then RefreshEventList();
+end;
+
+// =============================================================================
+// [2] FindHandlerOffset — 새 헬퍼 메서드 (private 선언부에 추가 필요)
+//
+//   코드 에디터에서 'procedure ClassName.handlerName' 의 'begin' 다음 줄
+//   오프셋을 반환한다. AddEventHandlerToCode 와 NavigateToEventHandler 양쪽에서
+//   공통으로 사용한다.
+//   찾지 못하면 -1 반환.
+// =============================================================================
+function Form1.FindHandlerOffset(handlerName: string): integer;
+var
+  code     : string;
+  doc      : ICSharpCode.AvalonEdit.Document.TextDocument;
+  procIdx  : integer;
+  beginIdx : integer;
+  line     : ICSharpCode.AvalonEdit.Document.DocumentLine;
+begin
+  Result  := -1;
+  code    := fCodeEditor.Text;
+  procIdx := code.IndexOf('procedure ' + fClassName + '.' + handlerName);
+  if procIdx < 0 then exit;
+ 
+  beginIdx := code.IndexOf('begin', procIdx);
+  if beginIdx < 0 then exit;
+ 
+  doc  := fCodeEditor.Document;
+  line := doc.GetLineByOffset(beginIdx);
+  if line.NextLine <> nil then
+    Result := line.NextLine.Offset
+  else
+    Result := doc.TextLength;
 end;
 
 // =============================================================================
@@ -2177,6 +2467,17 @@ procedure Form1.OnSelectionChanged(sender: System.Object;
 begin
   if fSurface.DesignContext = nil then exit;
   fPropView.SelectedItems := fSurface.DesignContext.Services.Selection.SelectedItems;
+
+  // 현재 선택된 디자인 아이템을 보관해 두고(이벤트탭 갱신용),
+  // 이벤트 탭이 활성화되어 있으면 즉시 목록을 갱신한다.
+  fCurrentDesignItem := nil;
+  var selItems := fSurface.DesignContext.Services.Selection.SelectedItems;
+  if selItems.Count > 0 then
+  begin
+    var en := selItems.GetEnumerator();
+    if en.MoveNext() then fCurrentDesignItem := en.Current;
+  end;
+  if fIsEventTabActive then RefreshEventList();
 end;
 
 procedure Form1.OnUndoStackChanged(sender: System.Object; e: System.EventArgs);
@@ -2977,6 +3278,270 @@ begin
   BuildDockLayout();
 end;
 
+// =============================================================================
+// 속성/이벤트 탭 (Properties 창 ⚡ 아이콘 전환)
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// BuildPropertyEventPanel
+//   hostRight(ElementHost) 안에 들어가는 최상위 WPF Grid를 구성한다.
+//   구조:
+//     [0] 상단 툴바  : 속성(▤) / 이벤트(⚡) 토글 버튼 2개
+//     [1] 본문       : fPropView(속성탭) 또는 fEventListView(이벤트탭) — 토글로 가시성 전환
+//     [2] 하단 설명줄 : VS 스타일처럼 선택된 행에 대한 설명 표시
+// -----------------------------------------------------------------------------
+function Form1.BuildPropertyEventPanel: System.Windows.Controls.Grid;
+var
+  toolbar    : System.Windows.Controls.StackPanel;
+  rowToolbar, rowBody, rowDesc : System.Windows.Controls.RowDefinition;
+begin
+  fPropEventRoot := new System.Windows.Controls.Grid();
+
+  rowToolbar := new System.Windows.Controls.RowDefinition();
+  rowToolbar.Height := System.Windows.GridLength.Auto;
+  rowBody    := new System.Windows.Controls.RowDefinition();
+  rowBody.Height := new System.Windows.GridLength(1, System.Windows.GridUnitType.Star);
+  rowDesc    := new System.Windows.Controls.RowDefinition();
+  rowDesc.Height := System.Windows.GridLength.Auto;
+
+  fPropEventRoot.RowDefinitions.Add(rowToolbar);
+  fPropEventRoot.RowDefinitions.Add(rowBody);
+  fPropEventRoot.RowDefinitions.Add(rowDesc);
+
+  // ── 상단 툴바: 속성 / 이벤트 토글 버튼 ────────────────────────────────────
+  toolbar := new System.Windows.Controls.StackPanel();
+  toolbar.Orientation     := System.Windows.Controls.Orientation.Horizontal;
+  toolbar.Background      := System.Windows.Media.Brushes.WhiteSmoke;
+  toolbar.Height           := 26;
+
+  fBtnModeProps  := new System.Windows.Controls.Primitives.ToggleButton();
+  fBtnModeProps.Content := '▤';
+  fBtnModeProps.ToolTip := TLoc.S('dock.properties.mode_props'); //'속성'
+  fBtnModeProps.Width   := 26;
+  fBtnModeProps.Height  := 22;
+  fBtnModeProps.Margin  := new System.Windows.Thickness(2, 2, 0, 2);
+  fBtnModeProps.IsChecked := true;
+  fBtnModeProps.Click += OnModePropsClick;
+
+  fBtnModeEvents := new System.Windows.Controls.Primitives.ToggleButton();
+  fBtnModeEvents.Content := '⚡';
+  fBtnModeEvents.ToolTip := TLoc.S('dock.properties.mode_events'); //'이벤트'
+  fBtnModeEvents.Width   := 26;
+  fBtnModeEvents.Height  := 22;
+  fBtnModeEvents.Margin  := new System.Windows.Thickness(2, 2, 0, 2);
+  fBtnModeEvents.IsChecked := false;
+  fBtnModeEvents.Click += OnModeEventsClick;
+
+  toolbar.Children.Add(fBtnModeProps);
+  toolbar.Children.Add(fBtnModeEvents);
+  System.Windows.Controls.Grid.SetRow(toolbar, 0);
+  fPropEventRoot.Children.Add(toolbar);
+
+  // ── 본문: 속성 그리드(fPropView) ───────────────────────────────────────
+  fPropHostBorder := new System.Windows.Controls.Border();
+  fPropHostBorder.Child := fPropView;
+  System.Windows.Controls.Grid.SetRow(fPropHostBorder, 1);
+  fPropEventRoot.Children.Add(fPropHostBorder);
+
+  // ── 본문: 이벤트 목록 ───────────────────────────────────────────────────
+  // ※ WPF의 GridViewColumn.DisplayMemberBinding 은 리플렉션으로 .NET
+  //   프로퍼티(get/set)를 찾는데, PascalABC.NET 클래스의 필드(EventName 등)는
+  //   프로퍼티가 아니라서 바인딩이 비어 보이는 문제가 있었다.
+  //   → ItemsSource/Binding을 전혀 쓰지 않고, 행마다 Grid(2칸)를 직접 만들어
+  //     TextBlock.Text 에 값을 코드로 대입하는 방식으로 변경.
+  var eventListRoot := new System.Windows.Controls.Grid();
+  eventListRoot.Visibility := System.Windows.Visibility.Collapsed;
+  var elRow0, elRow1 : System.Windows.Controls.RowDefinition;
+  elRow0 := new System.Windows.Controls.RowDefinition();
+  elRow0.Height := System.Windows.GridLength.Auto;
+  elRow1 := new System.Windows.Controls.RowDefinition();
+  elRow1.Height := new System.Windows.GridLength(1, System.Windows.GridUnitType.Star);
+  eventListRoot.RowDefinitions.Add(elRow0);
+  eventListRoot.RowDefinitions.Add(elRow1);
+
+  // 헤더 행 (컬럼명: 이벤트 | 핸들러)
+  fEventHeaderGrid := MakeEventRowGrid();
+  fEventHeaderGrid.Background := System.Windows.Media.Brushes.WhiteSmoke;
+  fColEventNameHdr    := new System.Windows.Controls.TextBlock();
+  fColEventNameHdr.Text := TLoc.S('col.events.name'); //'이벤트'
+  fColEventNameHdr.FontWeight := System.Windows.FontWeights.Bold;
+  fColEventNameHdr.Padding := new System.Windows.Thickness(4, 2, 4, 2);
+  fColEventHandlerHdr := new System.Windows.Controls.TextBlock();
+  fColEventHandlerHdr.Text := TLoc.S('col.events.handler'); //'핸들러'
+  fColEventHandlerHdr.FontWeight := System.Windows.FontWeights.Bold;
+  fColEventHandlerHdr.Padding := new System.Windows.Thickness(4, 2, 4, 2);
+  System.Windows.Controls.Grid.SetColumn(fColEventNameHdr, 0);
+  System.Windows.Controls.Grid.SetColumn(fColEventHandlerHdr, 1);
+  fEventHeaderGrid.Children.Add(fColEventNameHdr);
+  fEventHeaderGrid.Children.Add(fColEventHandlerHdr);
+  System.Windows.Controls.Grid.SetRow(fEventHeaderGrid, 0);
+  eventListRoot.Children.Add(fEventHeaderGrid);
+
+  // 행 목록을 담는 스크롤 가능한 StackPanel
+  fEventRowsPanel := new System.Windows.Controls.StackPanel();
+  var eventScroll := new System.Windows.Controls.ScrollViewer();
+  eventScroll.VerticalScrollBarVisibility := System.Windows.Controls.ScrollBarVisibility.Auto;
+  eventScroll.Content := fEventRowsPanel;
+  System.Windows.Controls.Grid.SetRow(eventScroll, 1);
+  eventListRoot.Children.Add(eventScroll);
+
+  fEventListView := eventListRoot;
+
+  System.Windows.Controls.Grid.SetRow(fEventListView, 1);
+  fPropEventRoot.Children.Add(fEventListView);
+
+  // ── 하단 설명줄 ───────────────────────────────────────────────────────
+  fEventDescBar := new System.Windows.Controls.TextBlock();
+  fEventDescBar.Text     := TLoc.S('dock.properties.events_hint_default'); //'컨트롤을 더블클릭하면 핸들러로 이동합니다.'
+  fEventDescBar.Padding  := new System.Windows.Thickness(4, 2, 4, 2);
+  fEventDescBar.Background := System.Windows.Media.Brushes.WhiteSmoke;
+  fEventDescBar.TextWrapping := System.Windows.TextWrapping.Wrap;
+  fEventDescBar.Visibility := System.Windows.Visibility.Collapsed;
+  System.Windows.Controls.Grid.SetRow(fEventDescBar, 2);
+  fPropEventRoot.Children.Add(fEventDescBar);
+
+  fIsEventTabActive := false;
+  Result := fPropEventRoot;
+end;
+
+// -----------------------------------------------------------------------------
+// MakeEventRowGrid
+//   이벤트탭의 헤더/행 한 줄에 공통으로 쓰는 2칸(이벤트 | 핸들러) Grid를 만든다.
+//   두 컬럼 모두 균등 비율(*)로 나눠 헤더와 행의 폭이 항상 일치하게 한다.
+// -----------------------------------------------------------------------------
+function Form1.MakeEventRowGrid: System.Windows.Controls.Grid;
+var
+  col0, col1 : System.Windows.Controls.ColumnDefinition;
+begin
+  Result := new System.Windows.Controls.Grid();
+  col0   := new System.Windows.Controls.ColumnDefinition();
+  col0.Width := new System.Windows.GridLength(1, System.Windows.GridUnitType.Star);
+  col1   := new System.Windows.Controls.ColumnDefinition();
+  col1.Width := new System.Windows.GridLength(1, System.Windows.GridUnitType.Star);
+  Result.ColumnDefinitions.Add(col0);
+  Result.ColumnDefinitions.Add(col1);
+end;
+
+procedure Form1.OnModePropsClick(sender: System.Object; e: System.Windows.RoutedEventArgs);
+begin
+  SwitchToPropsTab();
+end;
+
+procedure Form1.OnModeEventsClick(sender: System.Object; e: System.Windows.RoutedEventArgs);
+begin
+  SwitchToEventsTab();
+end;
+
+procedure Form1.SwitchToPropsTab;
+begin
+  fIsEventTabActive := false;
+  fBtnModeProps.IsChecked  := true;
+  fBtnModeEvents.IsChecked := false;
+  fPropHostBorder.Visibility := System.Windows.Visibility.Visible;
+  fEventListView.Visibility  := System.Windows.Visibility.Collapsed;
+  fEventDescBar.Visibility   := System.Windows.Visibility.Collapsed;
+end;
+
+procedure Form1.SwitchToEventsTab;
+begin
+  fIsEventTabActive := true;
+  fBtnModeProps.IsChecked  := false;
+  fBtnModeEvents.IsChecked := true;
+  fPropHostBorder.Visibility := System.Windows.Visibility.Collapsed;
+  fEventListView.Visibility  := System.Windows.Visibility.Visible;
+  fEventDescBar.Visibility   := System.Windows.Visibility.Visible;
+  RefreshEventList();
+end;
+
+// -----------------------------------------------------------------------------
+// RefreshEventList
+//   현재 선택된 컨트롤(fCurrentDesignItem)의 타입에 맞는 적용 가능 이벤트
+//   목록을 가져와 fEventRowsPanel 에 행(Grid)을 직접 만들어 채운다.
+//   이미 XAML에 연결된 핸들러가 있으면 "핸들러" 칸에 표시한다.
+//   ※ ItemsSource/Binding을 쓰지 않고 TextBlock.Text 에 값을 직접 대입한다
+//     (PascalABC.NET 클래스 필드는 WPF 데이터 바인딩 대상이 되지 않기 때문).
+// -----------------------------------------------------------------------------
+procedure Form1.RefreshEventList;
+var
+  controlName, controlType, handlerName: string;
+  applicableEvents : array of string;
+  ev   : string;
+  rowIndex : integer;
+begin
+  fEventRowsPanel.Children.Clear();
+
+  if fCurrentDesignItem = nil then
+  begin
+    fEventDescBar.Text := TLoc.S('dock.properties.events_hint_none'); //'디자이너에서 컨트롤을 선택하면 이벤트 목록이 표시됩니다.'
+    exit;
+  end;
+
+  var nameProp := fCurrentDesignItem.Properties['Name'];
+  controlName := (if (nameProp <> nil) and (nameProp.ValueOnInstance <> nil)
+                  then nameProp.ValueOnInstance.ToString() else '');
+  controlType := fCurrentDesignItem.ComponentType.Name;
+
+  if controlName = '' then
+  begin
+    fEventDescBar.Text := TLoc.S('dock.properties.events_hint_noname'); //'이 컨트롤은 이름(x:Name)이 없어 이벤트를 연결할 수 없습니다.'
+    exit;
+  end;
+
+  applicableEvents := GetApplicableEvents(controlType);
+  rowIndex := 0;
+  foreach ev in applicableEvents do
+  begin
+    handlerName := GetExistingHandlerFromXaml(controlName, ev);
+    if handlerName = '' then handlerName := TLoc.S('dock.properties.events_placeholder'); //'(더블클릭하여 생성)'
+
+    var rowGrid := MakeEventRowGrid();
+    rowGrid.Tag := new TEventRow(ev, handlerName, controlName, controlType);
+    rowGrid.Background := (if rowIndex mod 2 = 0
+      then System.Windows.Media.Brushes.White
+      else new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(245, 248, 252)));
+
+    var txtEvent := new System.Windows.Controls.TextBlock();
+    txtEvent.Text    := ev;
+    txtEvent.Padding := new System.Windows.Thickness(4, 3, 4, 3);
+    System.Windows.Controls.Grid.SetColumn(txtEvent, 0);
+
+    var txtHandler := new System.Windows.Controls.TextBlock();
+    txtHandler.Text      := handlerName;
+    txtHandler.Padding   := new System.Windows.Thickness(4, 3, 4, 3);
+    txtHandler.Foreground := System.Windows.Media.Brushes.DarkSlateBlue;
+    System.Windows.Controls.Grid.SetColumn(txtHandler, 1);
+
+    rowGrid.Children.Add(txtEvent);
+    rowGrid.Children.Add(txtHandler);
+    rowGrid.MouseLeftButtonDown += OnEventRowMouseDown;
+
+    fEventRowsPanel.Children.Add(rowGrid);
+    rowIndex += 1;
+  end;
+
+  fEventDescBar.Text := TLoc.F('dock.properties.events_hint_selected', controlName, controlType);
+  //controlName + ' (' + controlType + ') — 더블클릭하면 핸들러로 이동합니다.'
+end;
+
+// -----------------------------------------------------------------------------
+// OnEventRowMouseDown
+//   이벤트 행(Grid)을 더블클릭하면 해당 이벤트의 핸들러로 코드를 생성/이동한다.
+//   Grid는 ListView가 아니라 MouseDoubleClick 이벤트가 없으므로
+//   MouseLeftButtonDown + e.ClickCount = 2 로 더블클릭을 판정한다.
+// -----------------------------------------------------------------------------
+procedure Form1.OnEventRowMouseDown(sender: System.Object; e: System.Windows.Input.MouseButtonEventArgs);
+var
+  rowGrid : System.Windows.Controls.Grid;
+  row     : TEventRow;
+begin
+  if e.ClickCount <> 2 then exit;
+  rowGrid := sender as System.Windows.Controls.Grid;
+  if rowGrid = nil then exit;
+  row := rowGrid.Tag as TEventRow;
+  if row = nil then exit;
+  NavigateToEventHandler(row.ControlName, row.ControlType, row.EventName);
+end;
+
 procedure Form1.BuildDockLayout;
 var
   editorGrid    : System.Windows.Controls.Grid;
@@ -2989,7 +3554,7 @@ begin
   fPropView       := new ICSharpCode.WpfDesign.Designer.PropertyGrid.PropertyGridView();
   hostRight       := new System.Windows.Forms.Integration.ElementHost();
   hostRight.Dock  := System.Windows.Forms.DockStyle.Fill;
-  hostRight.Child := fPropView;
+  hostRight.Child := BuildPropertyEventPanel();
 
   // ── 솔루션 탐색기 (TreeView) ─────────────────────────────────────────────
   trvSolution               := new System.Windows.Forms.TreeView();
@@ -3306,7 +3871,7 @@ end;
 procedure Form1.OnAbout(sender: System.Object; e: System.EventArgs);
 begin
   System.Windows.Forms.MessageBox.Show(
-    TLoc.S('dlg.about.body'),
+    TLoc.F('dlg.about.body', APP_VERSION),
     TLoc.S('title.info'),
     System.Windows.Forms.MessageBoxButtons.OK,
     System.Windows.Forms.MessageBoxIcon.Information);
@@ -3373,6 +3938,20 @@ begin
       if hdr <> nil then hdr.Text := TLoc.S('toolbox.category.common');
     end;
   end;
+
+  // 속성/이벤트 탭 (Properties ⚡) 갱신  ← 추가
+  if fBtnModeProps <> nil then
+    fBtnModeProps.ToolTip := TLoc.S('dock.properties.mode_props');
+  if fBtnModeEvents <> nil then
+    fBtnModeEvents.ToolTip := TLoc.S('dock.properties.mode_events');
+  if fColEventNameHdr <> nil then
+    fColEventNameHdr.Text := TLoc.S('col.events.name');
+  if fColEventHandlerHdr <> nil then
+    fColEventHandlerHdr.Text := TLoc.S('col.events.handler');
+  // 이벤트탭이 열려 있던 상태였다면 하단 설명줄/행 목록도 새 언어로 다시 채운다
+  if fIsEventTabActive then RefreshEventList()
+  else if fEventDescBar <> nil then
+    fEventDescBar.Text := TLoc.S('dock.properties.events_hint_default');
 end;
 
 // =============================================================================

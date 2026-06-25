@@ -266,6 +266,34 @@ begin
   TLoc.Register('msg.testhost.save_error',    ['호스트 파일 저장 오류: {0}', 'Host file save error: {0}',     'Ошибка сохранения файла хоста: {0}']);
   
 
+  // ── 속성창 이벤트 탭 (Properties ⚡) ─────────────────────────────────────
+  TLoc.Register('dock.properties.mode_props',  ['속성',  'Properties', 'Свойства']);
+  TLoc.Register('dock.properties.mode_events', ['이벤트', 'Events',    'События']);
+
+  TLoc.Register('col.events.name',    ['이벤트', 'Event',   'Событие']);
+  TLoc.Register('col.events.handler', ['핸들러', 'Handler', 'Обработчик']);
+
+  TLoc.Register('dock.properties.events_hint_default',
+    ['컨트롤을 더블클릭하면 핸들러로 이동합니다.',
+     'Double-click an event to jump to its handler.',
+     'Дважды щёлкните событие, чтобы перейти к обработчику.']);
+  TLoc.Register('dock.properties.events_hint_none',
+    ['디자이너에서 컨트롤을 선택하면 이벤트 목록이 표시됩니다.',
+     'Select a control in the designer to see its events.',
+     'Выберите элемент в дизайнере, чтобы увидеть его события.']);
+  TLoc.Register('dock.properties.events_hint_noname',
+    ['이 컨트롤은 이름(x:Name)이 없어 이벤트를 연결할 수 없습니다.',
+     'This control has no name (x:Name), so events cannot be wired.',
+     'У этого элемента нет имени (x:Name), события подключить нельзя.']);
+  TLoc.Register('dock.properties.events_hint_selected',
+    ['{0} ({1}) — 더블클릭하면 핸들러로 이동합니다.',
+     '{0} ({1}) — double-click to jump to its handler.',
+     '{0} ({1}) — дважды щёлкните, чтобы перейти к обработчику.']);
+  TLoc.Register('dock.properties.events_placeholder',
+    ['(더블클릭하여 생성)', '(double-click to create)', '(дважды щёлкните для создания)']);
+
+  TLoc.Register('msg.event.navigated', ['이벤트 핸들러로 이동: {0}', 'Navigated to event handler: {0}', 'Переход к обработчику события: {0}']);
+
   // 새 메뉴/라벨 추가 시 이 아래에 계속 추가하면 됩니다.
 end;
 

@@ -123,4 +123,85 @@ begin
   Result := false;
 end;
 
+// -----------------------------------------------------------------------------
+// 공통 이벤트 그룹 (모든 FrameworkElement / Control 계열이 공유)
+// -----------------------------------------------------------------------------
+const
+  COMMON_EVENTS: array of string = [
+    'Loaded', 'Unloaded', 'GotFocus', 'LostFocus',
+    'MouseDown', 'MouseUp', 'MouseMove', 'MouseEnter', 'MouseLeave', 'MouseWheel',
+    'PreviewMouseDown', 'PreviewMouseUp',
+    'KeyDown', 'KeyUp', 'PreviewKeyDown', 'PreviewKeyUp',
+    'SizeChanged', 'IsVisibleChanged', 'IsEnabledChanged', 'DataContextChanged',
+    'DragEnter', 'DragLeave', 'DragOver', 'Drop',
+    'ContextMenuOpening', 'ContextMenuClosing', 'ToolTipOpening', 'ToolTipClosing'
+  ];
+
+// -----------------------------------------------------------------------------
+// GetApplicableEvents
+//   컨트롤 타입명(ctrlType)을 받아, 해당 타입에서 실질적으로 의미 있는
+//   이벤트 목록(타입 고유 이벤트 + 공통 이벤트)을 반환한다.
+//   목록은 "주요 이벤트가 먼저" 오도록 정렬되어 있다 (Properties 창에서
+//   가장 많이 쓰는 이벤트가 위쪽에 보이도록).
+// -----------------------------------------------------------------------------
+function GetApplicableEvents(ctrlType: string): array of string;
+var
+  specific: array of string;
+  result_list: System.Collections.Generic.List<string>;
+  ev: string;
+begin
+  case ctrlType of
+    'Button', 'RepeatButton', 'ToggleButton':
+      specific := ['Click'];
+
+    'CheckBox', 'RadioButton':
+      specific := ['Checked', 'Unchecked', 'Click'];
+
+    'TextBox', 'PasswordBox', 'RichTextBox':
+      specific := ['TextChanged', 'TextInput'];
+
+    'ComboBox':
+      specific := ['SelectionChanged', 'DropDownOpened', 'DropDownClosed'];
+
+    'ListBox', 'ListView', 'DataGrid':
+      specific := ['SelectionChanged'];
+
+    'TreeView':
+      specific := ['SelectedItemChanged', 'NodeExpanded', 'NodeCollapsed'];
+
+    'Slider', 'ScrollBar', 'ProgressBar':
+      specific := ['ValueChanged'];
+
+    'ScrollViewer':
+      specific := ['ScrollChanged'];
+
+    'Expander':
+      specific := ['Expanded', 'Collapsed'];
+
+    'Window':
+      specific := ['Loaded', 'Closed', 'Closing', 'ContentRendered',
+                   'StateChanged', 'LocationChanged'];
+
+    'Image':
+      specific := [];
+
+    'Canvas', 'Grid', 'StackPanel', 'WrapPanel', 'DockPanel', 'Border':
+      specific := ['SizeChanged', 'LayoutUpdated'];
+  else
+    specific := ['Click'];   // 알려지지 않은 타입은 보수적으로 Click만 우선 표시
+  end;
+
+  result_list := new System.Collections.Generic.List<string>();
+  // 1) 타입 고유 이벤트 먼저
+  foreach ev in specific do
+    if not result_list.Contains(ev) then
+      result_list.Add(ev);
+  // 2) 공통 이벤트 추가 (중복 제외)
+  foreach ev in COMMON_EVENTS do
+    if not result_list.Contains(ev) then
+      result_list.Add(ev);
+
+  Result := result_list.ToArray();
+end;
+
 end.

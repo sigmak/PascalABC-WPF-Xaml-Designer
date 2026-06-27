@@ -7,6 +7,18 @@ PascalABC.net 개발툴을 활용한 pascal wpf xaml Designer
 4. DockPanelSuite             : https://www.nuget.org/api/v2/package/DockPanelSuite/3.1.0
 5. DockPanelSuite.ThemeVS2015 : https://www.nuget.org/packages/DockPanelSuite.ThemeVS2015/
 
+[Ver 2.2.7]
+* Window 태그 이벤트 속성 지원되도록 수정.
+
+* 컨트롤 속성 창 상단에 컨트롤 리스트 박스 추가해서 여기서도 선택 가능하게 수정.
+
+* 컨트롤 이벤트 속성 창에서 해당 이벤트들 더블 클릭시 xaml 소스코드창과 pascal 소스코드창에 동시에 이벤트호출코드 추가.
+
+* xaml, pascal 소스코드창에 각각 IntelliSense 기능 추가
+
+<img src='https://github.com/sigmak/PascalABC-WPF-Xaml-Designer/blob/main/screenshot/ver-2-2-7.png' />
+<img src='https://github.com/sigmak/PascalABC-WPF-Xaml-Designer/blob/main/screenshot/ver-2-2-7B.png' />
+
 
 [Ver 2.2.6]
 * 컨트롤 속성창 옆에 이벤트 속성창 추가

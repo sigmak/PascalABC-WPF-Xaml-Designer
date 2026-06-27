@@ -7,7 +7,7 @@
 // 외부 유닛 의존성:
 //   Models/   ProjectOptions, ControlInfo
 //   Events/   WpfEventMap
-//   Editor/   PascalHighlighting, PascalFolding
+//   Editor/   PascalHighlighting, PascalFolding, IntelliSenseUnit
 //   CodeGen/  XamlParser, XamlPreprocessor, PascalCodeGenerator
 //   Docking/  DockContents
 // =============================================================================
@@ -37,6 +37,7 @@ uses
   WpfEventMap,           // WPF_EVENTS, GetEventParamType, IsWpfEvent
   PascalHighlighting,    // CreatePascalHighlighting
   PascalFolding,         // TPascalFoldingStrategy
+  IntelliSenseUnit,      // TPascalIntelliSense, TXamlIntelliSense
   XamlParser,            // ParseXClassInfo, ParseControlsFromXaml, StripEventAttributesForRuntime
   XamlPreprocessor,      // PreprocessXaml, StripCustomNamespaces, PrepareXamlForBuild
   PascalCodeGenerator,   // TPascalCodeGenerator
@@ -56,7 +57,7 @@ uses
 //               자동으로 바뀝니다.
 // =============================================================================
 const
-  APP_VERSION = '2.2.6';
+  APP_VERSION = '2.2.7';
   APP_TITLE   = 'PascalABC-WPF-Designer';
 
 // =============================================================================
@@ -105,6 +106,11 @@ type
     fEventDescBar    : System.Windows.Controls.TextBlock;  // 하단 설명 표시줄
     fIsEventTabActive: boolean;
     fCurrentDesignItem : ICSharpCode.WpfDesign.DesignItem; // 현재 선택된 디자인 아이템 (이벤트탭 갱신용)
+    fStructureSyncPending : boolean; // ComponentRegistered/Removed가 한꺼번에 여러 번 발생할 때 중복 동기화 방지용
+    fCodeUserEdited   : boolean; // 코드 에디터를 사용자가 직접 타이핑해서 수정했는지(자동 재생성 보호용)
+    fSettingCodeText  : boolean; // SetCodeEditorText 내부에서 텍스트를 대입하는 중인지(TextChanged 재귀 방지)
+    fObjectSelectorCombo : System.Windows.Controls.ComboBox; // VS 스타일 객체 선택 콤보박스 (속성창 최상단)
+    fUpdatingObjectSelector : boolean; // 콤보 ↔ 캔버스 선택 동기화 시 재귀 호출 방지용
 
     // 프로젝트
     fProjectPath  : string;
@@ -113,6 +119,13 @@ type
     fProjectType  : TProjectType;
     fClassName    : string;
     fNamespace    : string;
+    fRootElementType : string; // 진짜 XAML 루트 태그명: 'Window' | 'UserControl' | 'Page' 등
+    fRootElementName : string; // 진짜 루트 태그의 x:Name (없으면 '')
+    fRootPropsPanel  : System.Windows.Controls.Grid;     // Window 전용 속성 패널(Title/Width/Height)
+    fTxtRootTitle    : System.Windows.Controls.TextBox;
+    fTxtRootWidth    : System.Windows.Controls.TextBox;
+    fTxtRootHeight   : System.Windows.Controls.TextBox;
+    fPopulatingRootProps : boolean; // 텍스트박스에 값을 채우는 중인지(LostFocus 재귀 방지)
 
     fOptions   : TProjectOptions;
     fCodeGen   : TPascalCodeGenerator;   // ★ 코드 생성기
@@ -171,6 +184,10 @@ type
     fCodeFoldingStrategy : TPascalFoldingStrategy;
     fCodeFoldingTimer    : System.Windows.Threading.DispatcherTimer;
 
+    // ── IntelliSense ─────────────────────────────────────────────────────────
+    fPascalIS : TPascalIntelliSense;   // Pascal 코드 에디터 자동완성
+    fXamlIS   : TXamlIntelliSense;    // XAML 에디터 자동완성
+
     // 프로젝트 옵션 다이얼로그용 필드
     fDlgTxtFolder    : System.Windows.Forms.TextBox;
     fTxtCompilerPath : System.Windows.Forms.TextBox;
@@ -205,7 +222,20 @@ type
     procedure SwitchToPropsTab;
     procedure SwitchToEventsTab;
     procedure RefreshEventList;
+    function  EnsureControlName(item: ICSharpCode.WpfDesign.DesignItem): string;
+    function  IsRootSurrogate(item: ICSharpCode.WpfDesign.DesignItem): boolean;
+    function  EnsureRootElementName: string;
+    function  GetRootAttribute(attrName: string): string;
+    procedure SetRootAttribute(attrName, value: string);
+    function  BuildRootPropsPanel: System.Windows.Controls.Grid;
+    procedure UpdateRootPropsPanelVisibility;
+    procedure PopulateRootPropsPanel;
+    procedure OnRootPropTextLostFocus(sender: System.Object; e: System.Windows.RoutedEventArgs);
+    procedure ParseRootElementInfo(xaml: string);
     function  GetExistingHandlerFromXaml(controlName, eventName: string): string;
+    function  GetExistingRootHandlerFromXaml(eventName: string): string;
+    procedure AddEventHandlerToXaml(controlName, eventName, handlerName: string);
+    procedure AddRootEventHandlerToXaml(eventName, handlerName: string);
     procedure OnEventRowMouseDown(sender: System.Object; e: System.Windows.Input.MouseButtonEventArgs);
     procedure NavigateToEventHandler(controlName, controlType, eventName: string);
     
@@ -215,6 +245,21 @@ type
     procedure OnToolboxClick(sender: System.Object; e: System.Windows.RoutedEventArgs);
     procedure OnDesignerDoubleClick(sender: System.Object; e: System.Windows.Input.MouseButtonEventArgs);
     procedure OnSelectionChanged(sender: System.Object; e: ICSharpCode.WpfDesign.DesignItemCollectionEventArgs);
+    procedure OnSurfacePreviewKeyDown(sender: System.Object; e: System.Windows.Input.KeyEventArgs);
+    procedure RestoreSelectionAfterDelete;
+    procedure OnComponentUnregistered(sender: System.Object; e: ICSharpCode.WpfDesign.DesignItemEventArgs);
+    procedure OnComponentRegistered(sender: System.Object; e: ICSharpCode.WpfDesign.DesignItemEventArgs);
+    procedure SyncAfterDesignerStructureChange;
+    procedure DoSyncAfterDesignerStructureChange;
+    procedure SetCodeEditorText(code: string);
+    procedure OnCodeEditorTextChanged(sender: System.Object; e: System.EventArgs);
+    procedure RefreshObjectSelector;
+    procedure CollectDesignItemsRecursive(item: ICSharpCode.WpfDesign.DesignItem; depth: integer;
+      list: System.Collections.Generic.List<ICSharpCode.WpfDesign.DesignItem>;
+      depths: System.Collections.Generic.List<integer>);
+    function  GetDisplayLabelFor(item: ICSharpCode.WpfDesign.DesignItem): string;
+    procedure OnObjectSelectorChanged(sender: System.Object; e: System.Windows.Controls.SelectionChangedEventArgs);
+    procedure SyncObjectSelectorSelection;
     procedure OnUndoStackChanged(sender: System.Object; e: System.EventArgs);
 
     // ── 탭 / 폼 이벤트 ──────────────────────────────────────────────────────
@@ -288,7 +333,6 @@ type
     function  SaveDesignerToString: string;
 
     // ── 이벤트 핸들러 삽입 ──────────────────────────────────────────────────
-    procedure AddEventHandlerToXaml(controlName, eventName, handlerName: string);
     // ★ 변경: procedure → function. 반환값은 코드 에디터에서 커서를 위치시킬 CaretOffset.
     function  AddEventHandlerToCode(handlerName, eventType: string): integer;
     // ★ 추가: Dispatcher.BeginInvoke로 호출할 캐럿 이동 헬퍼 (메서드 참조 방식 — 람다 호환성 문제 회피)
@@ -353,7 +397,6 @@ end;
 function Form1.GenerateCode: string;
 var
   ns, cls: string;
-  newXaml: string;
 begin
   RebuildCodeGen();
   case fProjectType of
@@ -385,6 +428,13 @@ begin
   end;
   fNamespace := ns;
   fClassName := cls;
+
+  // ── IntelliSense 컨텍스트 갱신 ───────────────────────────────────────────
+  // 코드 재생성 후 컨트롤 목록과 클래스명을 IntelliSense에 반영한다.
+  if fPascalIS <> nil then
+    fPascalIS.SetContext(fClassName, ParseControlsFromXaml(fXamlEditor.Text));
+  if fXamlIS <> nil then
+    fXamlIS.SetCodeText(Result);
 end;
 
 // =============================================================================
@@ -434,7 +484,7 @@ begin
     '</Window>';
 
   LoadXaml(defaultXaml);
-  fCodeEditor.Text := GenerateCode();
+  SetCodeEditorText(GenerateCode());
 
   ApplyCodeHighlighting();
   if fOptions.CodeFolding then EnableCodeFolding();
@@ -700,7 +750,6 @@ function MakeRow(lbl: System.Windows.Forms.Label;
 var
   dlg          : System.Windows.Forms.Form;
   splitDlg     : System.Windows.Forms.SplitContainer;
-  contentPanel : System.Windows.Forms.Panel;
   panels       : array[0..6] of System.Windows.Forms.Panel;
 
   i            : integer;
@@ -1386,7 +1435,7 @@ begin
   end;
 
   LoadXaml(defaultXaml);
-  fCodeEditor.Text := GenerateCode();
+  SetCodeEditorText(GenerateCode());
   ApplyCodeHighlighting();
   if fOptions.CodeFolding then EnableCodeFolding();
   Self.Text := TLoc.S('title.main_app') + ' — ' + fProjectPath;
@@ -1475,7 +1524,7 @@ begin
   ParseXClassInfo(fXamlEditor.Text, fNamespace, fClassName);
 
   if fCodeEditor.Text.Trim() = '' then
-    fCodeEditor.Text := GenerateCode();
+    SetCodeEditorText(GenerateCode());
 
   xamlPath := fProjectPath + fXamlFileName;
   pasPath  := fProjectPath + fPasFileName;
@@ -1675,7 +1724,15 @@ begin
     psi.WorkingDirectory := fProjectPath;
     if fOptions.StartArgs.Trim() <> '' then
       psi.Arguments := fOptions.StartArgs.Trim();
-    psi.UseShellExecute := false;
+    // ★ 수정: UseShellExecute := true 로 변경
+    //   false 이면 자식 프로세스(WPF .exe)가 부모(디자이너, WinForms 기반)의
+    //   .NET AppDomain 환경을 공유하게 되어, WPF 앱 종료 시 런타임 정리 과정에서
+    //   "SetCompatibleTextRenderingDefault must be called before the first
+    //   IWin32Window object is created" 예외가 디자이너 프로세스에 전파된다.
+    //   true 로 설정하면 OS 셸이 완전히 독립된 프로세스로 실행하므로 충돌 없음.
+    //   (단, UseShellExecute=true 이면 RedirectStandardOutput 불가 — 여기서는
+    //    실행 프로세스의 출력을 캡처하지 않으므로 문제없음)
+    psi.UseShellExecute := true;
     psi.CreateNoWindow  := false;
     fRunningProcess := new System.Diagnostics.Process();
     fRunningProcess.StartInfo := psi;
@@ -1798,7 +1855,8 @@ begin
     var runPsi              := new System.Diagnostics.ProcessStartInfo();
     runPsi.FileName         := hostExePath;
     runPsi.WorkingDirectory := fProjectPath;
-    runPsi.UseShellExecute  := false;
+    // ★ 수정: UseShellExecute := true (LaunchBuiltExe와 동일한 이유)
+    runPsi.UseShellExecute  := true;
     runPsi.CreateNoWindow   := false;
     fRunningProcess := new System.Diagnostics.Process();
     fRunningProcess.StartInfo := runPsi;
@@ -1941,9 +1999,9 @@ begin
 
   pasPath := fProjectPath + fPasFileName;
   if System.IO.File.Exists(pasPath) then
-    fCodeEditor.Text := System.IO.File.ReadAllText(pasPath)
+    SetCodeEditorText(System.IO.File.ReadAllText(pasPath))
   else
-    fCodeEditor.Text := GenerateCode();
+    SetCodeEditorText(GenerateCode());
 
   ApplyCodeHighlighting();
   if fOptions.CodeFolding then EnableCodeFolding();
@@ -1960,7 +2018,7 @@ begin
     ParseXClassInfo(fXamlEditor.Text, fNamespace, fClassName);
     if fCodeEditor.Text.Trim() = '' then
     begin
-      fCodeEditor.Text := GenerateCode();
+      SetCodeEditorText(GenerateCode());
       ApplyCodeHighlighting();
     end;
   end;
@@ -2010,7 +2068,6 @@ var
   function FindFinalEndDot(text: string): integer;
   var
     searchFrom, dotPos, afterDot: integer;
-    prevChar: char;
   begin
     Result     := -1;
     searchFrom := Length(text) - 1;
@@ -2187,6 +2244,37 @@ begin
   Result := tagText.Substring(quoteStart, quoteEnd - quoteStart);
 end;
 
+// -----------------------------------------------------------------------------
+// GetExistingRootHandlerFromXaml
+//   ★ 추가: 루트 태그(Window/UserControl/Page 등 — x:Name 없이도 첫 번째 태그)에서
+//   eventName="..." 속성이 이미 있으면 핸들러명을 반환한다.
+//   루트 태그는 x:Name이 없을 수 있으므로 GetExistingHandlerFromXaml과 별도로 처리한다.
+// -----------------------------------------------------------------------------
+function Form1.GetExistingRootHandlerFromXaml(eventName: string): string;
+var
+  xaml     : string;
+  tagEnd   : integer;
+  attrPos  : integer;
+  quoteStart, quoteEnd: integer;
+begin
+  Result := '';
+  xaml   := fXamlEditor.Text.TrimStart();
+  // 루트 여는 태그의 끝 '>' 위치
+  tagEnd := xaml.IndexOf('>');
+  if tagEnd < 0 then exit;
+
+  var tagText    := xaml.Substring(0, tagEnd + 1);
+  var attrPattern := eventName + '="';
+  attrPos := tagText.IndexOf(attrPattern);
+  if attrPos < 0 then exit;
+
+  quoteStart := attrPos + Length(attrPattern);
+  quoteEnd   := tagText.IndexOf('"', quoteStart);
+  if quoteEnd < 0 then exit;
+
+  Result := tagText.Substring(quoteStart, quoteEnd - quoteStart);
+end;
+
 procedure Form1.AddEventHandlerToXaml(controlName, eventName, handlerName: string);
 var xaml: string;
 begin
@@ -2197,6 +2285,93 @@ begin
   if xaml.Contains(eventName + '="' + handlerName + '"') then exit;
   xaml := xaml.Replace(pattern, pattern + ' ' + eventName + '="' + handlerName + '"');
   fXamlEditor.Text := xaml;
+end;
+
+// -----------------------------------------------------------------------------
+// AddRootEventHandlerToXaml
+//   ★ 추가: 루트 태그(Window/UserControl/Page)의 여는 태그 닫는 '>' 바로 앞에
+//   eventName="handlerName" 속성을 삽입한다.
+//   x:Name이 없는 루트에도 적용된다.
+//   이미 동일한 속성이 있으면 중복 삽입하지 않는다.
+// -----------------------------------------------------------------------------
+procedure Form1.AddRootEventHandlerToXaml(eventName, handlerName: string);
+var
+  xaml     : string;
+  trimmed  : string;
+  closeIdx : integer;
+  insertAt : integer;
+  attrStr  : string;
+begin
+  xaml    := fXamlEditor.Text;
+  trimmed := xaml.TrimStart();
+
+  // 이미 해당 이벤트 속성이 있으면 종료
+  if trimmed.Contains(eventName + '="' + handlerName + '"') then exit;
+
+  // 루트 여는 태그의 끝 '>' 위치
+  closeIdx := trimmed.IndexOf('>');
+  if closeIdx < 0 then exit;
+
+  attrStr := ' ' + eventName + '="' + handlerName + '"';
+
+  // self-closing '/>' 처리
+  if (closeIdx >= 1) and (trimmed[closeIdx - 1] = '/') then
+    insertAt := closeIdx - 1
+  else
+    insertAt := closeIdx;
+
+  trimmed := trimmed.Substring(0, insertAt) + attrStr + trimmed.Substring(insertAt);
+
+  // fXamlEditor.Text의 앞 공백(TrimStart로 제거된 부분) 복원
+  var leadLen := Length(xaml) - Length(xaml.TrimStart());
+  fXamlEditor.Text := xaml.Substring(0, leadLen) + trimmed;
+end;
+
+// -----------------------------------------------------------------------------
+// EnsureControlName
+//   루트가 아닌 일반 컨트롤(Button, Grid, TextBox 등)에 x:Name이 없으면
+//   "타입명+일련번호" 형태로 자동 생성해서 즉시 DesignItem에 부여한다.
+//   (Visual Studio와 동일한 동작: 이름 없는 컨트롤도 이벤트탭에 항상
+//   노출되며, 처음 이벤트를 연결하는 순간 비로소 이름이 확정된다.)
+//   ★ 루트 대리 Grid(=Window)에는 이 함수를 쓰지 않는다 — 그 경우는
+//   EnsureRootElementName이 진짜 <Window> 태그에 직접 써야 한다.
+// -----------------------------------------------------------------------------
+function Form1.EnsureControlName(item: ICSharpCode.WpfDesign.DesignItem): string;
+var
+  baseName, candidate, xaml: string;
+  n: integer;
+begin
+  Result := '';
+  if item = nil then exit;
+  if IsRootSurrogate(item) then begin Result := EnsureRootElementName(); exit; end;
+
+  var nameProp := item.Properties['Name'];
+  if nameProp = nil then exit;
+
+  var current := (if nameProp.ValueOnInstance <> nil
+                  then nameProp.ValueOnInstance.ToString() else '');
+  if current <> '' then begin Result := current; exit; end;
+
+  baseName := item.ComponentType.Name;
+  if baseName = '' then baseName := 'control';
+  baseName := System.Char.ToLower(baseName[1]).ToString() + baseName.Substring(1);
+
+  xaml := fXamlEditor.Text;
+  n := 1;
+  candidate := baseName + n.ToString();
+  while xaml.Contains('x:Name="' + candidate + '"') do
+  begin
+    n += 1;
+    candidate := baseName + n.ToString();
+  end;
+
+  try
+    nameProp.SetValue(candidate);
+  except
+    on System.Exception do begin Result := ''; exit; end;
+  end;
+
+  Result := candidate;
 end;
 
 // ★ 추가: Dispatcher.BeginInvoke로 호출되는 캐럿 이동 헬퍼.
@@ -2234,10 +2409,29 @@ begin
   if en.MoveNext() then item := en.Current;
   if item = nil then exit;
 
-  var nameProp := item.Properties['Name'];
-  controlName := (if (nameProp <> nil) and (nameProp.ValueOnInstance <> nil)
-                  then nameProp.ValueOnInstance.ToString() else '');
-  controlType := item.ComponentType.Name;
+  // ★ 수정: 더블클릭한 항목이 디자이너 RootItem(=Window 대리 Grid)이면
+  //   진짜 타입/이름(fRootElementType/fRootElementName)을 사용한다.
+  if IsRootSurrogate(item) then
+  begin
+    controlType := fRootElementType;
+    controlName := fRootElementName;
+  end
+  else
+  begin
+    var nameProp := item.Properties['Name'];
+    controlName := (if (nameProp <> nil) and (nameProp.ValueOnInstance <> nil)
+                    then nameProp.ValueOnInstance.ToString() else '');
+    controlType := item.ComponentType.Name;
+  end;
+
+  if controlName = '' then
+  begin
+    // ★ 수정: 이름이 없으면 더블클릭 시점에 자동으로 확정한다
+    //   (루트면 진짜 <Window> 태그에, 일반 컨트롤이면 DesignItem에).
+    controlName := EnsureControlName(item);
+    if controlName = '' then exit;
+    if not IsRootSurrogate(item) then SyncXamlEditor();
+  end;
 
   // 디자이너 더블클릭 시에는 컨트롤별 "기본 이벤트" 하나만 자동 연결한다
   // (VS와 동일한 동작). 다른 이벤트를 연결하려면 속성창의 ⚡ 이벤트 탭을 사용한다.
@@ -2270,50 +2464,44 @@ var
   caretOffset : integer;
   jumpAction  : System.Action<integer>;
   newCode     : string;
+  isRoot      : boolean;
 begin
   if controlName = '' then exit;
- 
+
+  // ★ 수정: 루트(Window/UserControl/Page) 여부를 판단하여
+  //   XAML 삽입 방식과 핸들러 기존 탐색 방식을 분기한다.
+  isRoot := string.Equals(controlType, fRootElementType,
+              System.StringComparison.OrdinalIgnoreCase)
+            and string.Equals(controlName, fRootElementName,
+              System.StringComparison.OrdinalIgnoreCase);
+
   // 이미 XAML에 연결된 핸들러가 있으면 그 이름을 재사용
-  handlerName := GetExistingHandlerFromXaml(controlName, eventName);
+  if isRoot then
+    handlerName := GetExistingRootHandlerFromXaml(eventName)
+  else
+    handlerName := GetExistingHandlerFromXaml(controlName, eventName);
+
   if handlerName = '' then
     handlerName := controlName + '_' + eventName;
- 
+
   // XAML에 이벤트 속성 추가 (없으면)
-  AddEventHandlerToXaml(controlName, eventName, handlerName);
- 
-  // ★ 수정: GenerateCode() 재호출로 InitializeComponent 를 올바르게 재생성.
-  //   이 시점에서 XAML에 이미 eventName="handlerName" 이 들어가 있으므로
-  //   ParseControlsFromXaml → GenerateInitializeComponent 경로가
-  //   해당 이벤트를 포함한 완전한 코드를 생성한다.
-  //
-  //   단, 기존 코드 에디터에 사용자가 직접 작성한 내용(TODO 구현부 등)이
-  //   있을 수 있으므로, 기존 코드를 보존하면서 핸들러 stub 만 추가하는
-  //   AddEventHandlerToCode 는 그대로 유지한다.
-  //   GenerateCode() 재호출은 InitializeComponent 블록만 갱신하는 것이 아니라
-  //   전체 코드를 교체하므로, 사용자 구현부가 날아가는 문제가 있다.
-  //   따라서 전략을 다음과 같이 분리한다:
-  //
-  //   A) 코드 에디터가 비어 있거나 초기 생성 상태(사용자 수정 없음)인 경우:
-  //      → GenerateCode() 전체 재생성 (가장 정확하고 안전)
-  //   B) 사용자가 이미 코드를 편집한 경우:
-  //      → AddEventHandlerToCode 로 stub 만 추가
-  //        + 코드 내 InitializeComponent 블록의 "Connect event handlers" 주석
-  //          아래에 += 구문을 직접 삽입 (InsertEventSubscription 헬퍼)
-  //
-  //   "초기 생성 상태" 판정: 코드 에디터에 handlerName 이 아직 없으면
-  //   사용자가 아직 편집하지 않은 것으로 간주.
- 
+  // ★ 수정: 루트는 AddRootEventHandlerToXaml, 일반 컨트롤은 AddEventHandlerToXaml
+  if isRoot then
+    AddRootEventHandlerToXaml(eventName, handlerName)
+  else
+    AddEventHandlerToXaml(controlName, eventName, handlerName);
+
   var currentCode := fCodeEditor.Text;
   var handlerExists := currentCode.Contains('procedure ' + fClassName + '.' + handlerName);
- 
+
   if not handlerExists then
   begin
     // 핸들러가 아직 없음 → GenerateCode() 로 전체 재생성이 가장 안전
     // (초기 상태이거나 이 이벤트가 처음 추가되는 경우)
     newCode := GenerateCode();
     if newCode <> '' then
-      fCodeEditor.Text := newCode;
- 
+      SetCodeEditorText(newCode);
+
     // 재생성 후 코드에서 핸들러 위치로 캐럿 이동
     caretOffset := FindHandlerOffset(handlerName);
   end
@@ -2324,13 +2512,13 @@ begin
     //  이 경로에서는 코드를 건드리지 않는다)
     caretOffset := FindHandlerOffset(handlerName);
   end;
- 
+
   tabControl.SelectedTab := tabCode;
   ApplyCodeHighlighting();
   if fOptions.CodeFolding then EnableCodeFolding();
- 
+
   AppendOutput(TLoc.F('msg.event.navigated', handlerName), false);
- 
+
   if caretOffset >= 0 then
   begin
     jumpAction := JumpCodeEditorCaretTo;
@@ -2338,7 +2526,7 @@ begin
       System.Windows.Threading.DispatcherPriority.Background,
       jumpAction, caretOffset);
   end;
- 
+
   if fIsEventTabActive then RefreshEventList();
 end;
 
@@ -2403,6 +2591,185 @@ begin
   ConnectEvents();
   if (menuItemFolding <> nil) and menuItemFolding.Checked then
     EnableFolding();
+  RefreshObjectSelector();  // ★ 수정: 새 문서를 로드하면 콤보박스 목록도 처음부터 새로 채운다
+end;
+
+// -----------------------------------------------------------------------------
+// ParseRootElementInfo
+//   진짜 XAML 텍스트에서 루트 태그명(Window/UserControl/Page 등)과 그
+//   x:Name(있으면)을 파싱해서 fRootElementType / fRootElementName에 저장한다.
+//   PreprocessXaml이 디자이너용으로 이 태그를 Grid로 바꿔치기하기 전에
+//   호출해야 한다 — 디자이너의 RootItem만 보면 진짜 루트 정체성을 알 수
+//   없기 때문에, 이 정보를 별도로 기억해 두는 것이 핵심이다.
+// -----------------------------------------------------------------------------
+procedure Form1.ParseRootElementInfo(xaml: string);
+var
+  trimmed, tagName: string;
+  re : System.Text.RegularExpressions.Regex;
+  m  : System.Text.RegularExpressions.Match;
+begin
+  fRootElementType := 'Window';
+  fRootElementName := '';
+
+  trimmed := xaml.TrimStart();
+  if not trimmed.StartsWith('<') then exit;
+
+  // 루트 태그명 추출: "<Window" 또는 "<local:MyWindow" 등에서 로컬 이름만
+  re := new System.Text.RegularExpressions.Regex('^<\s*([A-Za-z_][\w]*:)?([A-Za-z_][\w]*)');
+  m  := re.Match(trimmed);
+  if m.Success then
+    tagName := m.Groups[2].Value
+  else
+    tagName := 'Window';
+  fRootElementType := tagName;
+
+  // 루트 태그가 끝나는 지점(첫 '>' 또는 self-closing '/>')까지만 잘라서
+  // 그 구간 안에서 x:Name 속성을 찾는다 (자식 엘리먼트의 x:Name과 혼동 방지).
+  var closeIdx := trimmed.IndexOf('>');
+  if closeIdx < 0 then exit;
+  var openTag := trimmed.Substring(0, closeIdx + 1);
+
+  re := new System.Text.RegularExpressions.Regex('x:Name\s*=\s*"([^"]*)"');
+  m  := re.Match(openTag);
+  if m.Success then
+    fRootElementName := m.Groups[1].Value;
+end;
+
+// -----------------------------------------------------------------------------
+// IsRootSurrogate
+//   주어진 DesignItem이 디자이너 모델의 RootItem인지(=진짜 Window/UserControl을
+//   대신해서 디자이너에 들어간 가짜 Grid인지) 판정한다.
+//   참조 동일성(=)으로 비교 — 문서당 RootItem은 항상 단 하나의 안정적인
+//   객체이므로 이 비교가 정확하고 충분하다.
+// -----------------------------------------------------------------------------
+function Form1.IsRootSurrogate(item: ICSharpCode.WpfDesign.DesignItem): boolean;
+begin
+  // ★ 수정: DesignItem 간 '=' 비교가 PascalABC.NET에서 여러 후보 연산자로
+  //   해석되어 "Several functions can be called" 모호성 오류를 일으킨다.
+  //   참조 동일성 비교는 ReferenceEquals로 명시해 모호성을 없앤다.
+  Result := (item <> nil) and (fSurface.DesignContext <> nil) and
+            System.Object.ReferenceEquals(item, fSurface.DesignContext.RootItem);
+end;
+
+// -----------------------------------------------------------------------------
+// EnsureRootElementName
+//   진짜 루트(Window 등)에 x:Name이 없으면 자동으로 부여한다.
+//   ★ 핵심: 가짜 Grid의 DesignItem.Properties를 건드리지 않는다 — 그쪽에
+//   이름을 설정해도 SyncXamlEditor가 가짜 루트 자신의 속성은 버리고
+//   자식만 옮기기 때문에 절대 진짜 XAML에 반영되지 않는다.
+//   대신 fXamlEditor.Text/fOriginalXaml의 진짜 루트 여는 태그에 직접
+//   x:Name="..." 속성을 문자열로 삽입한다.
+// -----------------------------------------------------------------------------
+function Form1.EnsureRootElementName: string;
+var
+  xaml, candidate, baseName: string;
+  closeIdx, n: integer;
+begin
+  if fRootElementName <> '' then begin Result := fRootElementName; exit; end;
+
+  xaml := fXamlEditor.Text;
+  var trimmed := xaml.TrimStart();
+  closeIdx := trimmed.IndexOf('>');
+  if closeIdx < 0 then begin Result := ''; exit; end;
+
+  baseName := fRootElementType;
+  if baseName = '' then baseName := 'window';
+  baseName := System.Char.ToLower(baseName[1]).ToString() + baseName.Substring(1);
+
+  n := 1;
+  candidate := baseName + n.ToString();
+  while xaml.Contains('x:Name="' + candidate + '"') do
+  begin
+    n += 1;
+    candidate := baseName + n.ToString();
+  end;
+
+  // 여는 태그의 '>' (또는 self-closing '/>') 바로 앞에 x:Name 삽입.
+  // self-closing('/>')인 경우 '/' 앞에 끼워 넣어야 하므로 별도 처리.
+  if trimmed.Substring(0, closeIdx + 1).TrimEnd().EndsWith('/>') then
+  begin
+    var insertAt := trimmed.LastIndexOf('/', closeIdx);
+    trimmed := trimmed.Substring(0, insertAt) + ' x:Name="' + candidate + '" ' +
+               trimmed.Substring(insertAt);
+  end
+  else
+  begin
+    trimmed := trimmed.Substring(0, closeIdx) + ' x:Name="' + candidate + '"' +
+               trimmed.Substring(closeIdx);
+  end;
+
+  fXamlEditor.Text := trimmed;
+  fOriginalXaml     := trimmed;
+  fRootElementName  := candidate;
+  Result := candidate;
+end;
+
+// -----------------------------------------------------------------------------
+// GetRootAttribute / SetRootAttribute
+//   진짜 루트 태그(<Window ...>)의 속성을 직접 읽고 쓴다.
+//   ★ 핵심: 가짜 Grid의 DesignItem.Properties를 절대 거치지 않는다 — 그쪽을
+//   고쳐도 SyncXamlEditor가 가짜 루트 자신의 속성은 버리고 자식만 옮기기
+//   때문에 절대 진짜 XAML에 반영되지 않는다(실측 확인됨). 따라서 Window가
+//   선택됐을 때 Title/Width/Height 같은 속성은 이 두 함수로만 다뤄야 한다.
+// -----------------------------------------------------------------------------
+function Form1.GetRootAttribute(attrName: string): string;
+var
+  trimmed: string;
+  closeIdx: integer;
+  re: System.Text.RegularExpressions.Regex;
+  m: System.Text.RegularExpressions.Match;
+begin
+  Result := '';
+  trimmed := fXamlEditor.Text.TrimStart();
+  closeIdx := trimmed.IndexOf('>');
+  if closeIdx < 0 then exit;
+  var openTag := trimmed.Substring(0, closeIdx + 1);
+
+  re := new System.Text.RegularExpressions.Regex(attrName + '\s*=\s*"([^"]*)"');
+  m  := re.Match(openTag);
+  if m.Success then Result := m.Groups[1].Value;
+end;
+
+procedure Form1.SetRootAttribute(attrName, value: string);
+var
+  xaml, trimmed: string;
+  closeIdx: integer;
+  re: System.Text.RegularExpressions.Regex;
+  m: System.Text.RegularExpressions.Match;
+begin
+  xaml := fXamlEditor.Text;
+  trimmed := xaml.TrimStart();
+  closeIdx := trimmed.IndexOf('>');
+  if closeIdx < 0 then exit;
+  var openTag := trimmed.Substring(0, closeIdx + 1);
+
+  re := new System.Text.RegularExpressions.Regex(attrName + '\s*=\s*"([^"]*)"');
+  m  := re.Match(openTag);
+
+  if m.Success then
+  begin
+    // 이미 있는 속성 → 값만 교체
+    var newOpenTag := re.Replace(openTag, attrName + '="' + value + '"', 1);
+    trimmed := newOpenTag + trimmed.Substring(closeIdx + 1);
+  end
+  else
+  begin
+    // 없는 속성 → '>' (또는 '/>') 바로 앞에 새로 삽입
+    if openTag.TrimEnd().EndsWith('/>') then
+    begin
+      var insertAt := trimmed.LastIndexOf('/', closeIdx);
+      trimmed := trimmed.Substring(0, insertAt) + ' ' + attrName + '="' + value + '" ' +
+                 trimmed.Substring(insertAt);
+    end
+    else
+    begin
+      trimmed := trimmed.Substring(0, closeIdx) + ' ' + attrName + '="' + value + '"' +
+                 trimmed.Substring(closeIdx);
+    end;
+  end;
+
+  fXamlEditor.Text := trimmed;
+  fOriginalXaml     := trimmed;
 end;
 
 procedure Form1.LoadXaml(xaml: string);
@@ -2410,6 +2777,11 @@ var designXaml: string;
 begin
   fOriginalXaml    := xaml;
   fXamlEditor.Text := xaml;
+  // ★ 수정: 디자이너에 들어가기 전에, 진짜 루트 태그(Window/UserControl/Page)와
+  //   그 x:Name을 별도로 기억해 둔다. PreprocessXaml이 이 태그를 Grid로
+  //   바꿔치기해서 디자이너에 넣기 때문에, 디자이너의 RootItem(=Grid)만
+  //   봐서는 "진짜 루트가 무엇인지" 절대 알 수 없다.
+  ParseRootElementInfo(xaml);
   try
     designXaml := PreprocessXaml(xaml);
   except
@@ -2460,6 +2832,13 @@ begin
   if undoSvc <> nil then
     undoSvc.UndoStackChanged += OnUndoStackChanged;
   fSurface.MouseDoubleClick += OnDesignerDoubleClick;
+  // ★ 수정: Delete 키 경로는 WinForms ElementHost+WPF interop에서 포커스가
+  //   항상 WPF 쪽에 있다고 보장할 수 없어 신뢰할 수 없다. 보조 안전장치로만 유지.
+  fSurface.PreviewKeyDown += OnSurfacePreviewKeyDown;
+  // ★ 수정: 컴포넌트 추가/삭제는 경로(키보드/메뉴/Outline 등)와 무관하게
+  //   이 모델 레벨 이벤트로 항상 잡힌다 — 구조 동기화의 실질적 단일 진입점.
+  fSurface.DesignContext.Services.Component.ComponentRegistered += OnComponentRegistered;
+  fSurface.DesignContext.Services.Component.ComponentRemoved    += OnComponentUnregistered;
 end;
 
 procedure Form1.OnSelectionChanged(sender: System.Object;
@@ -2477,11 +2856,377 @@ begin
     var en := selItems.GetEnumerator();
     if en.MoveNext() then fCurrentDesignItem := en.Current;
   end;
+  SyncObjectSelectorSelection();
+  UpdateRootPropsPanelVisibility();
   if fIsEventTabActive then RefreshEventList();
+end;
+
+// -----------------------------------------------------------------------------
+// UpdateRootPropsPanelVisibility
+//   루트(Window 등)가 선택되면 서드파티 PropertyGridView를 숨기고
+//   fRootPropsPanel(Title/Width/Height 전용, 진짜 XAML 직접 편집)을 보여준다.
+//   일반 컨트롤이 선택되면 반대로 전환한다.
+// -----------------------------------------------------------------------------
+procedure Form1.UpdateRootPropsPanelVisibility;
+begin
+  if fRootPropsPanel = nil then exit;
+  if IsRootSurrogate(fCurrentDesignItem) then
+  begin
+    fPropView.Visibility       := System.Windows.Visibility.Collapsed;
+    fRootPropsPanel.Visibility := System.Windows.Visibility.Visible;
+    PopulateRootPropsPanel();
+  end
+  else
+  begin
+    fRootPropsPanel.Visibility := System.Windows.Visibility.Collapsed;
+    fPropView.Visibility       := System.Windows.Visibility.Visible;
+  end;
+end;
+
+// -----------------------------------------------------------------------------
+// PopulateRootPropsPanel
+//   진짜 <Window> 태그의 현재 Title/Width/Height 값을 읽어서 텍스트박스에
+//   채운다. fPopulatingRootProps 플래그로, 이 과정에서 발생하는 LostFocus를
+//   "사용자 편집"으로 오인해 다시 써버리는 것을 막는다.
+// -----------------------------------------------------------------------------
+procedure Form1.PopulateRootPropsPanel;
+begin
+  fPopulatingRootProps := true;
+  try
+    fTxtRootTitle.Text  := GetRootAttribute('Title');
+    fTxtRootWidth.Text  := GetRootAttribute('Width');
+    fTxtRootHeight.Text := GetRootAttribute('Height');
+  finally
+    fPopulatingRootProps := false;
+  end;
+end;
+
+// -----------------------------------------------------------------------------
+// OnRootPropTextLostFocus
+//   세 텍스트박스 중 어느 것이든 포커스를 잃으면, 그 값을 진짜 <Window>
+//   태그에 직접 반영한다(SetRootAttribute). 빈 문자열이면 그 속성을
+//   건드리지 않는다(의도치 않게 Title 등을 지우는 것을 방지).
+// -----------------------------------------------------------------------------
+procedure Form1.OnRootPropTextLostFocus(sender: System.Object; e: System.Windows.RoutedEventArgs);
+var attrName, value: string;
+begin
+  if fPopulatingRootProps then exit;
+  var txt := sender as System.Windows.Controls.TextBox;
+  if txt = nil then exit;
+
+  if System.Object.ReferenceEquals(txt, fTxtRootTitle) then attrName := 'Title'
+  else if System.Object.ReferenceEquals(txt, fTxtRootWidth) then attrName := 'Width'
+  else if System.Object.ReferenceEquals(txt, fTxtRootHeight) then attrName := 'Height'
+  else exit;
+
+  value := txt.Text.Trim();
+  if value = '' then exit;
+  if value = GetRootAttribute(attrName) then exit;  // 변경 없음 → 불필요한 동기화 방지
+
+  SetRootAttribute(attrName, value);
+end;
+
+// -----------------------------------------------------------------------------
+// GetDisplayLabelFor
+//   주어진 DesignItem을 콤보박스/이벤트탭 등에 표시할 "진짜" 라벨로 변환한다.
+//   루트 대리 Grid(=Window 등)면 fRootElementType/fRootElementName을 쓰고,
+//   일반 컨트롤이면 실제 Name/ComponentType을 쓴다.
+//   서드파티 PropertyGridView 내부의 "Type: Grid" 표시는 라이브러리를
+//   포크하지 않는 한 못 바꾸지만, 이 라벨이 콤보박스에 항상 진실을
+//   보여주므로 그걸로 충분히 보완된다 — 별도 안내 배너는 더 이상 필요 없다.
+// -----------------------------------------------------------------------------
+function Form1.GetDisplayLabelFor(item: ICSharpCode.WpfDesign.DesignItem): string;
+var name, typeName: string;
+begin
+  if item = nil then begin Result := ''; exit; end;
+
+  if IsRootSurrogate(item) then
+  begin
+    typeName := fRootElementType;
+    name     := fRootElementName;
+  end
+  else
+  begin
+    typeName := item.ComponentType.Name;
+    var nameProp := item.Properties['Name'];
+    name := (if (nameProp <> nil) and (nameProp.ValueOnInstance <> nil)
+             then nameProp.ValueOnInstance.ToString() else '');
+  end;
+
+  Result := (if name <> '' then name + ' (' + typeName + ')' else '(' + typeName + ')');
+end;
+
+// -----------------------------------------------------------------------------
+// CollectDesignItemsRecursive
+//   item을 시작점으로 자기 자신 + 모든 자손 DesignItem을 깊이와 함께 수집한다.
+//   라이브러리 자체(DesignSurface.cs의 Descendants 헬퍼)가 쓰는 것과 동일한
+//   패턴: ContentPropertyName이 있으면 ContentProperty를 통해 자식을 찾는다
+//   (컬렉션이면 CollectionElements, 단일 값이면 Value). 이렇게 하면 Grid의
+//   Children, ContentControl의 Content 등 컨테이너 종류를 가리지 않고
+//   일반적으로 전체 트리를 순회할 수 있다.
+// -----------------------------------------------------------------------------
+procedure Form1.CollectDesignItemsRecursive(item: ICSharpCode.WpfDesign.DesignItem; depth: integer;
+  list: System.Collections.Generic.List<ICSharpCode.WpfDesign.DesignItem>;
+  depths: System.Collections.Generic.List<integer>);
+var content: ICSharpCode.WpfDesign.DesignItemProperty;
+begin
+  if item = nil then exit;
+  list.Add(item);
+  depths.Add(depth);
+
+  content := nil;
+  try
+    if not System.String.IsNullOrEmpty(item.ContentPropertyName) then
+      content := item.ContentProperty;
+  except
+    on System.Exception do
+      content := nil;
+  end;
+  if content = nil then exit;
+
+  if content.IsCollection then
+  begin
+    var child: ICSharpCode.WpfDesign.DesignItem;
+    foreach child in content.CollectionElements do
+      CollectDesignItemsRecursive(child, depth + 1, list, depths);
+  end
+  else
+  begin
+    if content.Value <> nil then
+      CollectDesignItemsRecursive(content.Value, depth + 1, list, depths);
+  end;
+end;
+
+// -----------------------------------------------------------------------------
+// RefreshObjectSelector
+//   VS 스타일 "객체 선택 콤보박스" 갱신. 디자이너에 올라온 모든 항목
+//   (루트 Window부터 가장 깊이 중첩된 컨트롤까지)을 들여쓰기와 함께
+//   나열한다. 캔버스를 직접 클릭하지 않고도 콤보에서 바로 선택할 수 있어,
+//   특히 루트(Window)처럼 클릭으로 선택하기 애매한 항목에 유용하다.
+// -----------------------------------------------------------------------------
+procedure Form1.RefreshObjectSelector;
+begin
+  if fObjectSelectorCombo = nil then exit;
+  if fSurface.DesignContext = nil then begin fObjectSelectorCombo.Items.Clear(); exit; end;
+  if fSurface.DesignContext.RootItem = nil then begin fObjectSelectorCombo.Items.Clear(); exit; end;
+
+  fUpdatingObjectSelector := true;
+  try
+    fObjectSelectorCombo.Items.Clear();
+
+    var items  := new System.Collections.Generic.List<ICSharpCode.WpfDesign.DesignItem>();
+    var depths := new System.Collections.Generic.List<integer>();
+    CollectDesignItemsRecursive(fSurface.DesignContext.RootItem, 0, items, depths);
+
+    var i: integer;
+    for i := 0 to items.Count - 1 do
+    begin
+      var cbi := new System.Windows.Controls.ComboBoxItem();
+      cbi.Content := new System.String(' ', depths[i] * 2) + GetDisplayLabelFor(items[i]);
+      cbi.Tag     := items[i];
+      fObjectSelectorCombo.Items.Add(cbi);
+    end;
+  finally
+    fUpdatingObjectSelector := false;
+  end;
+
+  SyncObjectSelectorSelection();
+end;
+
+// -----------------------------------------------------------------------------
+// SyncObjectSelectorSelection
+//   캔버스에서 선택이 바뀌었을 때(OnSelectionChanged), 콤보박스의 강조
+//   항목도 그에 맞춰 옮긴다. 참조 동일성(ReferenceEquals)으로 일치하는
+//   항목을 찾는다 — '=' 직접 비교는 모호성 오류를 일으키므로 쓰지 않는다.
+// -----------------------------------------------------------------------------
+procedure Form1.SyncObjectSelectorSelection;
+begin
+  if fObjectSelectorCombo = nil then exit;
+  fUpdatingObjectSelector := true;
+  try
+    fObjectSelectorCombo.SelectedItem := nil;
+    if fCurrentDesignItem = nil then exit;
+
+    var obj: System.Object;
+    foreach obj in fObjectSelectorCombo.Items do
+    begin
+      var cbi := obj as System.Windows.Controls.ComboBoxItem;
+      if cbi = nil then continue;
+      var tagItem := cbi.Tag as ICSharpCode.WpfDesign.DesignItem;
+      if System.Object.ReferenceEquals(tagItem, fCurrentDesignItem) then
+      begin
+        fObjectSelectorCombo.SelectedItem := cbi;
+        break;
+      end;
+    end;
+  finally
+    fUpdatingObjectSelector := false;
+  end;
+end;
+
+// -----------------------------------------------------------------------------
+// OnObjectSelectorChanged
+//   사용자가 콤보박스에서 항목을 직접 고르면, 정식 Selection 서비스를 통해
+//   선택을 옮긴다. 이렇게 하면 캔버스 클릭으로 선택했을 때와 완전히 동일한
+//   경로(OnSelectionChanged → 속성창/이벤트탭 갱신)를 그대로 재사용한다.
+// -----------------------------------------------------------------------------
+procedure Form1.OnObjectSelectorChanged(sender: System.Object;
+  e: System.Windows.Controls.SelectionChangedEventArgs);
+begin
+  if fUpdatingObjectSelector then exit;  // 우리가 SyncObjectSelectorSelection 중이면 무시(재귀 방지)
+  if fSurface.DesignContext = nil then exit;
+
+  var cbi := fObjectSelectorCombo.SelectedItem as System.Windows.Controls.ComboBoxItem;
+  if cbi = nil then exit;
+  var item := cbi.Tag as ICSharpCode.WpfDesign.DesignItem;
+  if item = nil then exit;
+
+  var list: System.Collections.Generic.ICollection<ICSharpCode.WpfDesign.DesignItem> :=
+    new System.Collections.Generic.List<ICSharpCode.WpfDesign.DesignItem>();
+  list.Add(item);
+  fSurface.DesignContext.Services.Selection.SetSelectedComponents(list);
 end;
 
 procedure Form1.OnUndoStackChanged(sender: System.Object; e: System.EventArgs);
 begin SyncXamlEditor(); end;
+
+// -----------------------------------------------------------------------------
+// OnSurfacePreviewKeyDown / RestoreSelectionAfterDelete
+//   Delete/Back 키 경로(보조 안전장치). 실질적으로 신뢰할 수 있는 경로는
+//   DoSyncAfterDesignerStructureChange 쪽이며, 거기서도 동일한 복구 로직을
+//   호출한다 — 두 경로가 같은 함수를 부르므로 중복 호출돼도 두 번째는
+//   아무 일도 하지 않아 무해하다.
+// -----------------------------------------------------------------------------
+procedure Form1.OnSurfacePreviewKeyDown(sender: System.Object;
+  e: System.Windows.Input.KeyEventArgs);
+var action: System.Action;
+begin
+  if (e.Key <> System.Windows.Input.Key.Delete) and
+     (e.Key <> System.Windows.Input.Key.Back) then exit;
+  if fSurface.DesignContext = nil then exit;
+
+  action := RestoreSelectionAfterDelete;
+  fSurface.Dispatcher.BeginInvoke(
+    System.Windows.Threading.DispatcherPriority.Background, action);
+end;
+
+// -----------------------------------------------------------------------------
+// RestoreSelectionAfterDelete
+//   삭제 직후 Selection이 비었거나 더 이상 문서에 존재하지 않는 항목을
+//   계속 가리키고 있으면, 디자이너의 RootItem(=Window/UserControl 대리 Grid)을
+//   다시 선택해 속성창/이벤트탭이 자동으로 갱신되게 한다.
+//   "더 이상 문서에 없음" 판정은 라이브러리가 Undo/Redo에서 쓰는
+//   ModelTools.IsInDocument를 그대로 사용한다(DesignSurface.cs의
+//   GetLiveElements와 동일한 패턴 — 가장 신뢰할 수 있는 공식 판정 방법).
+// -----------------------------------------------------------------------------
+procedure Form1.RestoreSelectionAfterDelete;
+var needsRestore: boolean;
+begin
+  if fSurface.DesignContext = nil then exit;
+  var sel := fSurface.DesignContext.Services.Selection;
+
+  needsRestore := sel.SelectedItems.Count = 0;
+  if not needsRestore then
+  begin
+    var en := sel.SelectedItems.GetEnumerator();
+    if en.MoveNext() then
+      needsRestore := (en.Current = nil) or
+        not ICSharpCode.WpfDesign.Designer.ModelTools.IsInDocument(en.Current);
+  end;
+
+  if needsRestore and (fSurface.DesignContext.RootItem <> nil) then
+  begin
+    var list: System.Collections.Generic.ICollection<ICSharpCode.WpfDesign.DesignItem> :=
+      new System.Collections.Generic.List<ICSharpCode.WpfDesign.DesignItem>();
+    list.Add(fSurface.DesignContext.RootItem);
+    sel.SetSelectedComponents(list);  // → SelectionChanged 발생 → 속성창/이벤트탭/콤보 자동 갱신
+  end
+  else if needsRestore then
+  begin
+    fCurrentDesignItem := nil;
+    SyncObjectSelectorSelection();
+    if fIsEventTabActive then RefreshEventList();
+  end;
+end;
+
+// -----------------------------------------------------------------------------
+// SetCodeEditorText / OnCodeEditorTextChanged
+//   "우리(IDE)가 자동 생성한 코드"와 "사용자가 직접 타이핑한 코드"를
+//   구분하기 위한 헬퍼. IDE가 코드를 쓸 때는 SetCodeEditorText를 거쳐서
+//   fCodeUserEdited를 건드리지 않는다.
+// -----------------------------------------------------------------------------
+procedure Form1.SetCodeEditorText(code: string);
+begin
+  fSettingCodeText := true;
+  try
+    fCodeEditor.Text := code;
+    fCodeUserEdited   := false;
+  finally
+    fSettingCodeText := false;
+  end;
+end;
+
+procedure Form1.OnCodeEditorTextChanged(sender: System.Object; e: System.EventArgs);
+begin
+  if fSettingCodeText then exit;
+  fCodeUserEdited := true;
+end;
+
+// -----------------------------------------------------------------------------
+// OnComponentUnregistered (IComponentService.ComponentRemoved에 연결됨)
+// OnComponentRegistered   (IComponentService.ComponentRegistered에 연결됨)
+//   컴포넌트 추가/삭제 시 경로 불문 항상 발생. 구조 변경 동기화의
+//   단일 진입점으로 사용한다.
+// -----------------------------------------------------------------------------
+procedure Form1.OnComponentUnregistered(sender: System.Object;
+  e: ICSharpCode.WpfDesign.DesignItemEventArgs);
+begin
+  SyncAfterDesignerStructureChange();
+end;
+
+procedure Form1.OnComponentRegistered(sender: System.Object;
+  e: ICSharpCode.WpfDesign.DesignItemEventArgs);
+begin
+  SyncAfterDesignerStructureChange();
+end;
+
+// -----------------------------------------------------------------------------
+// SyncAfterDesignerStructureChange / DoSyncAfterDesignerStructureChange
+//   구조 변경 후 선택 복구 + XAML 동기화 + (안전한 경우) 코드 재생성을
+//   한 프레임 모아서(coalesce) 처리한다.
+// -----------------------------------------------------------------------------
+procedure Form1.SyncAfterDesignerStructureChange;
+var action: System.Action;
+begin
+  if fStructureSyncPending then exit;
+  fStructureSyncPending := true;
+
+  action := DoSyncAfterDesignerStructureChange;
+  fSurface.Dispatcher.BeginInvoke(
+    System.Windows.Threading.DispatcherPriority.Background, action);
+end;
+
+procedure Form1.DoSyncAfterDesignerStructureChange;
+var newCode: string;
+begin
+  fStructureSyncPending := false;
+  if fLoadingXaml then exit;
+
+  RestoreSelectionAfterDelete();
+  SyncXamlEditor();
+  RefreshObjectSelector();  // ★ 수정: 컨트롤 추가/삭제 시 콤보박스 목록도 함께 갱신
+
+  if not fCodeUserEdited then
+  begin
+    newCode := GenerateCode();
+    if newCode <> '' then SetCodeEditorText(newCode);
+  end
+  else
+    AppendOutput(TLoc.S('msg.designer.structure_changed_manual_sync_needed'), false);
+    //'디자이너 구조가 변경되었습니다. 코드를 직접 편집한 이력이 있어 자동 재생성을 건너뜁니다.'
+
+  if fIsEventTabActive then RefreshEventList();
+end;
 
 procedure Form1.OnApplyXaml(sender: System.Object; e: System.Windows.RoutedEventArgs);
 begin
@@ -2624,6 +3369,10 @@ procedure Form1.OnXamlTextChanged(sender: System.Object; e: System.EventArgs);
 begin
   if (fFoldingManager <> nil) and menuItemFolding.Checked then
   begin fFoldingTimer.Stop(); fFoldingTimer.Start(); end;
+
+  // XAML이 바뀌면 Pascal IS의 컨트롤 목록도 갱신 (x:Name 추가/삭제 반영)
+  if fPascalIS <> nil then
+    fPascalIS.SetContext(fClassName, ParseControlsFromXaml(fXamlEditor.Text));
 end;
 
 // =============================================================================
@@ -3290,13 +4039,83 @@ end;
 //     [1] 본문       : fPropView(속성탭) 또는 fEventListView(이벤트탭) — 토글로 가시성 전환
 //     [2] 하단 설명줄 : VS 스타일처럼 선택된 행에 대한 설명 표시
 // -----------------------------------------------------------------------------
+// BuildRootPropsPanel
+//   Window(루트) 전용 속성 패널. Title/Width/Height 세 가지만 다룬다 —
+//   서드파티 PropertyGridView가 보여주는 다른 속성들은 어차피 가짜 Grid의
+//   속성이라 진짜 XAML에 반영되지 않으므로, 의미 있게 편집 가능한 항목만
+//   추려서 직접 만든다. 값 변경은 LostFocus 시점에 SetRootAttribute로
+//   진짜 <Window> 태그에 바로 반영된다.
+// -----------------------------------------------------------------------------
+function Form1.BuildRootPropsPanel: System.Windows.Controls.Grid;
+var
+  grid: System.Windows.Controls.Grid;
+  r: integer;
+
+  function MakeLabel(text: string; row: integer): System.Windows.Controls.TextBlock;
+  begin
+    Result := new System.Windows.Controls.TextBlock();
+    Result.Text    := text;
+    Result.Margin  := new System.Windows.Thickness(6, 6, 4, 2);
+    System.Windows.Controls.Grid.SetRow(Result, row);
+    System.Windows.Controls.Grid.SetColumn(Result, 0);
+  end;
+
+begin
+  grid := new System.Windows.Controls.Grid();
+  for r := 0 to 2 do
+  begin
+    var rd := new System.Windows.Controls.RowDefinition();
+    rd.Height := System.Windows.GridLength.Auto;
+    grid.RowDefinitions.Add(rd);
+  end;
+  var colLabel := new System.Windows.Controls.ColumnDefinition();
+  colLabel.Width := System.Windows.GridLength.Auto;
+  var colValue := new System.Windows.Controls.ColumnDefinition();
+  colValue.Width := new System.Windows.GridLength(1, System.Windows.GridUnitType.Star);
+  grid.ColumnDefinitions.Add(colLabel);
+  grid.ColumnDefinitions.Add(colValue);
+
+  grid.Children.Add(MakeLabel(TLoc.S('dock.properties.root_title'), 0));    //'Title'
+  grid.Children.Add(MakeLabel(TLoc.S('dock.properties.root_width'), 1));   //'Width'
+  grid.Children.Add(MakeLabel(TLoc.S('dock.properties.root_height'), 2));  //'Height'
+
+  fTxtRootTitle := new System.Windows.Controls.TextBox();
+  fTxtRootTitle.Margin := new System.Windows.Thickness(2, 4, 6, 2);
+  fTxtRootTitle.LostFocus += OnRootPropTextLostFocus;
+  System.Windows.Controls.Grid.SetRow(fTxtRootTitle, 0);
+  System.Windows.Controls.Grid.SetColumn(fTxtRootTitle, 1);
+
+  fTxtRootWidth := new System.Windows.Controls.TextBox();
+  fTxtRootWidth.Margin := new System.Windows.Thickness(2, 4, 6, 2);
+  fTxtRootWidth.LostFocus += OnRootPropTextLostFocus;
+  System.Windows.Controls.Grid.SetRow(fTxtRootWidth, 1);
+  System.Windows.Controls.Grid.SetColumn(fTxtRootWidth, 1);
+
+  fTxtRootHeight := new System.Windows.Controls.TextBox();
+  fTxtRootHeight.Margin := new System.Windows.Thickness(2, 4, 6, 2);
+  fTxtRootHeight.LostFocus += OnRootPropTextLostFocus;
+  System.Windows.Controls.Grid.SetRow(fTxtRootHeight, 2);
+  System.Windows.Controls.Grid.SetColumn(fTxtRootHeight, 1);
+
+  grid.Children.Add(fTxtRootTitle);
+  grid.Children.Add(fTxtRootWidth);
+  grid.Children.Add(fTxtRootHeight);
+
+  Result := grid;
+end;
+
 function Form1.BuildPropertyEventPanel: System.Windows.Controls.Grid;
 var
   toolbar    : System.Windows.Controls.StackPanel;
-  rowToolbar, rowBody, rowDesc : System.Windows.Controls.RowDefinition;
+  rowSelector, rowToolbar, rowBody, rowDesc : System.Windows.Controls.RowDefinition;
 begin
   fPropEventRoot := new System.Windows.Controls.Grid();
 
+  // ★ 수정: 맨 위에 VS 스타일 "객체 선택 콤보박스" 전용 행을 추가한다.
+  //   Properties/Events 탭 어느 쪽이든 항상 보이는 위치(맨 위)에 둔다 —
+  //   VS의 Properties 창도 탭과 무관하게 항상 상단에 객체 선택 드롭다운이 있다.
+  rowSelector := new System.Windows.Controls.RowDefinition();
+  rowSelector.Height := System.Windows.GridLength.Auto;
   rowToolbar := new System.Windows.Controls.RowDefinition();
   rowToolbar.Height := System.Windows.GridLength.Auto;
   rowBody    := new System.Windows.Controls.RowDefinition();
@@ -3304,11 +4123,20 @@ begin
   rowDesc    := new System.Windows.Controls.RowDefinition();
   rowDesc.Height := System.Windows.GridLength.Auto;
 
+  fPropEventRoot.RowDefinitions.Add(rowSelector);
   fPropEventRoot.RowDefinitions.Add(rowToolbar);
   fPropEventRoot.RowDefinitions.Add(rowBody);
   fPropEventRoot.RowDefinitions.Add(rowDesc);
 
-  // ── 상단 툴바: 속성 / 이벤트 토글 버튼 ────────────────────────────────────
+  // ── 0행: 객체 선택 콤보박스 ─────────────────────────────────────────────
+  fObjectSelectorCombo := new System.Windows.Controls.ComboBox();
+  fObjectSelectorCombo.Margin   := new System.Windows.Thickness(2, 2, 2, 2);
+  fObjectSelectorCombo.FontSize := 11;
+  fObjectSelectorCombo.SelectionChanged += OnObjectSelectorChanged;
+  System.Windows.Controls.Grid.SetRow(fObjectSelectorCombo, 0);
+  fPropEventRoot.Children.Add(fObjectSelectorCombo);
+
+  // ── 1행: 속성 / 이벤트 토글 버튼 ────────────────────────────────────────
   toolbar := new System.Windows.Controls.StackPanel();
   toolbar.Orientation     := System.Windows.Controls.Orientation.Horizontal;
   toolbar.Background      := System.Windows.Media.Brushes.WhiteSmoke;
@@ -3334,13 +4162,27 @@ begin
 
   toolbar.Children.Add(fBtnModeProps);
   toolbar.Children.Add(fBtnModeEvents);
-  System.Windows.Controls.Grid.SetRow(toolbar, 0);
+  System.Windows.Controls.Grid.SetRow(toolbar, 1);
   fPropEventRoot.Children.Add(toolbar);
 
-  // ── 본문: 속성 그리드(fPropView) ───────────────────────────────────────
+  // ── 2행: 속성 그리드(fPropView) / Window 전용 속성 패널 ──────────────────
+  // ★ 수정: 이전에 있던 "루트 안내 배너"는 제거했다. 콤보박스가 항상
+  //   진짜 타입/이름을 보여주므로 더 이상 필요 없다.
+  // ★ 수정: Window(루트 대리 Grid)가 선택되면 서드파티 PropertyGridView 대신
+  //   fRootPropsPanel(Title/Width/Height 전용)을 보여준다. 가짜 Grid에
+  //   Height/Width를 직접 입력해도 SyncXamlEditor가 그 값을 버리고
+  //   진짜 <Window> 태그에는 절대 반영되지 않는 문제(실측 확인)가 있어서,
+  //   루트일 때는 이 전용 패널이 진짜 <Window> 태그를 직접 읽고 쓴다.
+  var propSwitchContainer := new System.Windows.Controls.Grid();
+
+  fRootPropsPanel := BuildRootPropsPanel();
+  fRootPropsPanel.Visibility := System.Windows.Visibility.Collapsed;
+  propSwitchContainer.Children.Add(fRootPropsPanel);
+  propSwitchContainer.Children.Add(fPropView);
+
   fPropHostBorder := new System.Windows.Controls.Border();
-  fPropHostBorder.Child := fPropView;
-  System.Windows.Controls.Grid.SetRow(fPropHostBorder, 1);
+  fPropHostBorder.Child := propSwitchContainer;
+  System.Windows.Controls.Grid.SetRow(fPropHostBorder, 2);
   fPropEventRoot.Children.Add(fPropHostBorder);
 
   // ── 본문: 이벤트 목록 ───────────────────────────────────────────────────
@@ -3387,7 +4229,7 @@ begin
 
   fEventListView := eventListRoot;
 
-  System.Windows.Controls.Grid.SetRow(fEventListView, 1);
+  System.Windows.Controls.Grid.SetRow(fEventListView, 2);
   fPropEventRoot.Children.Add(fEventListView);
 
   // ── 하단 설명줄 ───────────────────────────────────────────────────────
@@ -3397,7 +4239,7 @@ begin
   fEventDescBar.Background := System.Windows.Media.Brushes.WhiteSmoke;
   fEventDescBar.TextWrapping := System.Windows.TextWrapping.Wrap;
   fEventDescBar.Visibility := System.Windows.Visibility.Collapsed;
-  System.Windows.Controls.Grid.SetRow(fEventDescBar, 2);
+  System.Windows.Controls.Grid.SetRow(fEventDescBar, 3);
   fPropEventRoot.Children.Add(fEventDescBar);
 
   fIsEventTabActive := false;
@@ -3460,13 +4302,22 @@ end;
 //   이미 XAML에 연결된 핸들러가 있으면 "핸들러" 칸에 표시한다.
 //   ※ ItemsSource/Binding을 쓰지 않고 TextBlock.Text 에 값을 직접 대입한다
 //     (PascalABC.NET 클래스 필드는 WPF 데이터 바인딩 대상이 되지 않기 때문).
+//   ★ 수정: 선택된 항목이 디자이너의 RootItem(=Window/UserControl을 대신해
+//     디자이너에 들어간 가짜 Grid)이면, 그 가짜 객체의 타입/이름이 아니라
+//     ParseRootElementInfo로 미리 기억해 둔 "진짜" 타입/이름을 사용한다.
+//     이렇게 해야 Window의 이벤트 목록(Loaded, Closing 등)이 올바르게
+//     나오고, x:Name도 가짜 Grid가 아니라 진짜 <Window> 태그에 반영된다.
+//   ★ 수정: 이름이 없어도 더 이상 여기서 종료하지 않는다 — VS 트렌드:
+//     이름 없는 컨트롤도 이벤트 목록을 항상 보여주고, 실제 이름은
+//     더블클릭으로 핸들러를 처음 생성하는 순간 자동 부여한다.
 // -----------------------------------------------------------------------------
 procedure Form1.RefreshEventList;
 var
-  controlName, controlType, handlerName: string;
+  controlName, controlType, handlerName, displayName: string;
   applicableEvents : array of string;
   ev   : string;
   rowIndex : integer;
+  isRoot   : boolean;
 begin
   fEventRowsPanel.Children.Clear();
 
@@ -3476,22 +4327,27 @@ begin
     exit;
   end;
 
-  var nameProp := fCurrentDesignItem.Properties['Name'];
-  controlName := (if (nameProp <> nil) and (nameProp.ValueOnInstance <> nil)
-                  then nameProp.ValueOnInstance.ToString() else '');
-  controlType := fCurrentDesignItem.ComponentType.Name;
-
-  if controlName = '' then
+  isRoot := IsRootSurrogate(fCurrentDesignItem);
+  if isRoot then
   begin
-    fEventDescBar.Text := TLoc.S('dock.properties.events_hint_noname'); //'이 컨트롤은 이름(x:Name)이 없어 이벤트를 연결할 수 없습니다.'
-    exit;
+    controlType := fRootElementType;   // 'Window' 등 — 가짜 Grid가 아니라 진짜 타입
+    controlName := fRootElementName;   // 진짜 <Window x:Name="..."> 의 이름
+  end
+  else
+  begin
+    var nameProp := fCurrentDesignItem.Properties['Name'];
+    controlName := (if (nameProp <> nil) and (nameProp.ValueOnInstance <> nil)
+                    then nameProp.ValueOnInstance.ToString() else '');
+    controlType := fCurrentDesignItem.ComponentType.Name;
   end;
+  displayName := (if controlName <> '' then controlName
+                  else '(' + TLoc.S('dock.properties.events_unnamed') + ')');
 
   applicableEvents := GetApplicableEvents(controlType);
   rowIndex := 0;
   foreach ev in applicableEvents do
   begin
-    handlerName := GetExistingHandlerFromXaml(controlName, ev);
+    handlerName := (if controlName <> '' then GetExistingHandlerFromXaml(controlName, ev) else '');
     if handlerName = '' then handlerName := TLoc.S('dock.properties.events_placeholder'); //'(더블클릭하여 생성)'
 
     var rowGrid := MakeEventRowGrid();
@@ -3519,8 +4375,8 @@ begin
     rowIndex += 1;
   end;
 
-  fEventDescBar.Text := TLoc.F('dock.properties.events_hint_selected', controlName, controlType);
-  //controlName + ' (' + controlType + ') — 더블클릭하면 핸들러로 이동합니다.'
+  fEventDescBar.Text := TLoc.F('dock.properties.events_hint_selected', displayName, controlType);
+  //displayName + ' (' + controlType + ') — 더블클릭하면 핸들러로 이동합니다.'
 end;
 
 // -----------------------------------------------------------------------------
@@ -3533,20 +4389,37 @@ procedure Form1.OnEventRowMouseDown(sender: System.Object; e: System.Windows.Inp
 var
   rowGrid : System.Windows.Controls.Grid;
   row     : TEventRow;
+  ctrlName: string;
 begin
   if e.ClickCount <> 2 then exit;
   rowGrid := sender as System.Windows.Controls.Grid;
   if rowGrid = nil then exit;
   row := rowGrid.Tag as TEventRow;
   if row = nil then exit;
-  NavigateToEventHandler(row.ControlName, row.ControlType, row.EventName);
+
+  ctrlName := row.ControlName;
+  if ctrlName = '' then
+  begin
+    // ★ 수정: 이름 없는 컨트롤(Window 등)에 처음 이벤트를 연결하는 순간
+    //   이름을 자동 확정한다. 루트 대리 항목이면 진짜 <Window> 태그에,
+    //   일반 컨트롤이면 해당 DesignItem에 이름을 부여한다.
+    if IsRootSurrogate(fCurrentDesignItem) then
+      ctrlName := EnsureRootElementName()
+    else if fCurrentDesignItem <> nil then
+    begin
+      ctrlName := EnsureControlName(fCurrentDesignItem);
+      if ctrlName <> '' then SyncXamlEditor();
+    end;
+    if ctrlName = '' then exit;
+  end;
+
+  NavigateToEventHandler(ctrlName, row.ControlType, row.EventName);
 end;
 
 procedure Form1.BuildDockLayout;
 var
   editorGrid    : System.Windows.Controls.Grid;
   editorRow0, editorRow1 : System.Windows.Controls.RowDefinition;
-  applyBtn      : System.Windows.Controls.Button;
   colMsg, colLine, colFile: System.Windows.Forms.ColumnHeader;
   mainPanel     : System.Windows.Forms.Panel;
 begin
@@ -3596,15 +4469,7 @@ begin
   editorRow1.Height := new System.Windows.GridLength(1, System.Windows.GridUnitType.Star);
   editorGrid.RowDefinitions.Add(editorRow0);
   editorGrid.RowDefinitions.Add(editorRow1);
-{  
-  applyBtn         := new System.Windows.Controls.Button();
-  applyBtn.Content := TLoc.S('btn.apply_xaml');//'▶ XAML 적용';
-  applyBtn.Height  := 28;
-  applyBtn.Margin  := new System.Windows.Thickness(0, 0, 0, 2);
-  applyBtn.Click   += OnApplyXaml;
-  System.Windows.Controls.Grid.SetRow(applyBtn, 0);
-  editorGrid.Children.Add(applyBtn);
-}
+
   fApplyXamlBtn    := new System.Windows.Controls.Button();
   fApplyXamlBtn.Content := TLoc.S('btn.apply_xaml');//'▶ XAML 적용';
   fApplyXamlBtn.Height  := 28;
@@ -3629,9 +4494,16 @@ begin
   fCodeEditor.VerticalScrollBarVisibility   := System.Windows.Controls.ScrollBarVisibility.Auto;
   fCodeEditor.Options.IndentationSize     := fOptions.TabSize;
   fCodeEditor.Options.ConvertTabsToSpaces := not fOptions.UseTabs;
+  // ★ 수정: 사용자가 코드를 직접 편집했는지 추적 — 자동 재생성으로
+  //   사용자가 작성한 핸들러 본문을 덮어쓰지 않도록 보호하는 데 사용.
+  fCodeEditor.TextChanged += OnCodeEditorTextChanged;
   hostCode       := new System.Windows.Forms.Integration.ElementHost();
   hostCode.Dock  := System.Windows.Forms.DockStyle.Fill;
   hostCode.Child := fCodeEditor;
+
+  // ── IntelliSense 초기화 ──────────────────────────────────────────────────
+  fPascalIS := new TPascalIntelliSense(fCodeEditor);
+  fXamlIS   := new TXamlIntelliSense(fXamlEditor);
 
   // ── 디자인 + XAML 탭 내부의 좌우 분할 (디자인 캔버스 / XAML 에디터) ──────
   //   ※ 이 SplitContainer는 "메인 문서 영역 내부"의 분할이므로 유지한다.
@@ -3800,9 +4672,10 @@ begin
       else childProp.SetValue(newItem);
     end;
     grp.Commit();
-    var arr := new ICSharpCode.WpfDesign.DesignItem[1];
-    arr[0]  := newItem;
-    services.Selection.SetSelectedComponents(arr);
+    var list: System.Collections.Generic.ICollection<ICSharpCode.WpfDesign.DesignItem> :=
+      new System.Collections.Generic.List<ICSharpCode.WpfDesign.DesignItem>();
+    list.Add(newItem);
+    services.Selection.SetSelectedComponents(list);
     SyncXamlEditor();
   except
     on ex: System.Exception do
@@ -3837,7 +4710,12 @@ end;
 
 procedure Form1.OnFormClosing(sender: System.Object;
   e: System.Windows.Forms.FormClosingEventArgs);
-begin KillPreviousBuildProcesses(); end;
+begin
+  // IntelliSense 이벤트 핸들러 해제
+  if fPascalIS <> nil then begin fPascalIS.Detach(); fPascalIS := nil; end;
+  if fXamlIS   <> nil then begin fXamlIS.Detach();   fXamlIS   := nil; end;
+  KillPreviousBuildProcesses();
+end;
 
 // =============================================================================
 // 정보 대화상자
@@ -3968,7 +4846,7 @@ begin
   TStrings_Messages.RegisterAll;
 
   // 마지막으로 저장된 언어를 %AppData%\PascalABC-WPF-Designer\settings.ini 에서 로드.
-  // 저장된 값이 없으면 LoadLanguage 가 기본값(Korean)을 반환한다.
+  // 저장된 값이 없으면 LoadLanguage 가 기본값(Korean)을 반환한다. 
   TLoc.SetLanguage(AppSettings.TAppSettings.LoadLanguage);
 
   System.Windows.Forms.Application.EnableVisualStyles();

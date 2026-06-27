@@ -24,7 +24,7 @@ uses
   ControlInfo,          // TControlInfo
   ProjectOptions,       // TProjectOptions
   WpfEventMap,          // GetEventParamType, GetEventDelegateType
-  XamlParser,           // ParseXClassInfo, ParseControlsFromXaml
+  XamlParser,           // ParseXClassInfo, ParseControlsFromXaml, ParseRootControlInfo
   LocalizationCore,     // TLoc
   Strings_Common;       // 문자열 키 등록 (코드 생성기 주석용)
 
@@ -39,10 +39,12 @@ type
 
     function BuildIndent: string;
 
-    // ★ 수정: GenerateInitializeComponent 시그니처 변경 없음.
-    //   내부 구현에서 try/finally 블록과 FindName/이벤트연결 블록을 명확히 분리.
+    // ★ 수정: GenerateInitializeComponent 에 rootCtrl 매개변수 추가.
+    //   루트 Window/UserControl 의 이벤트는 Self.Event += Handler 로 직접 구독.
+    //   (FindName 은 루트 자신에 대해 null 을 반환하므로 사용 불가)
     function GenerateInitializeComponent(
-      controls: System.Collections.Generic.List<TControlInfo>): string;
+      controls: System.Collections.Generic.List<TControlInfo>;
+      rootCtrl: TControlInfo): string;
 
   public
     constructor Create(
@@ -137,7 +139,8 @@ end;
 //     end;
 // -----------------------------------------------------------------------------
 function TPascalCodeGenerator.GenerateInitializeComponent(
-  controls: System.Collections.Generic.List<TControlInfo>): string;
+  controls: System.Collections.Generic.List<TControlInfo>;
+  rootCtrl: TControlInfo): string;
 var
   sb        : System.Text.StringBuilder;
   ctrl      : TControlInfo;
@@ -244,13 +247,28 @@ begin
     end;
   end;
 
+  // ── 루트(Window/UserControl/Page) 이벤트 구독 ──────────────────────────────
+  // ★ 수정: 루트 이벤트는 FindName 으로 얻을 수 없다.
+  //   Window.FindName('window1') 은 항상 null 을 반환하기 때문이다.
+  //   루트 이벤트는 반드시 Self 에 직접 구독해야 한다.
+  //   이렇게 해야 Loaded, Closing 등의 핸들러가 올바르게 연결되고,
+  //   XAML 로더가 x:Class 인스턴스(Self)에서 핸들러를 찾는 것과도 일관성이 유지된다.
+  if (rootCtrl <> nil) and (rootCtrl.Events.Count > 0) then
+  begin
+    sb.AppendLine('');
+    sb.AppendLine('  // ' + TLoc.S('codegen.comment.connect_events') + ' (root)');
+    var evIdx2 := 0;
+    while evIdx2 < rootCtrl.Events.Count do
+    begin
+      ev := rootCtrl.Events[evIdx2];
+      sb.AppendLine('  Self.' + ev.Item1 + ' += ' + ev.Item2 + ';');
+      evIdx2 += 1;
+    end;
+  end;
+
   sb.AppendLine('end;');
   Result := sb.ToString();
 end;
-
-// -----------------------------------------------------------------------------
-// GenerateWpfAppCode
-//
 // ★ 수정:
 //   1. private 선언부에 이벤트 핸들러 procedure 가 누락되지 않도록
 //      controls 루프를 확실히 처리한다.
@@ -270,6 +288,8 @@ var
   programName : string;
   hasEvents   : boolean;
   indent      : string;
+  rootCtrl    : TControlInfo;   // ★ 추가: 루트(Window/UserControl/Page) 이벤트
+  hasRootEvts : boolean;
 begin
   ParseXClassInfo(xamlText, fNamespace, fClassName);
 
@@ -281,6 +301,9 @@ begin
   outCls := fClassName;
 
   controls    := ParseControlsFromXaml(xamlText);
+  // ★ 추가: 루트 이벤트는 별도 수집 (FindName 불가 → Self.Event += 방식)
+  rootCtrl    := ParseRootControlInfo(xamlText);
+  hasRootEvts := (rootCtrl <> nil) and (rootCtrl.Events.Count > 0);
   programName := fNamespace;
   indent      := BuildIndent();
 
@@ -331,14 +354,23 @@ begin
   foreach ctrl in controls do
     if ctrl.Events.Count > 0 then hasEvents := true;
 
-  if hasEvents then
+  if hasEvents or hasRootEvts then
   begin
     sb.AppendLine('');
     sb.AppendLine(indent + '// ── ' + TLoc.S('codegen.comment.event_decl') + ' ─────────────────────');
+    // 일반 컨트롤 이벤트 핸들러 선언
     foreach ctrl in controls do
       foreach ev in ctrl.Events do
       begin
         var paramType := GetEventParamType(ctrl.TypeName, ev.Item1);
+        sb.AppendLine(indent + indent + 'procedure ' + ev.Item2 +
+          '(sender: System.Object; e: ' + paramType + ');');
+      end;
+    // ★ 추가: 루트 이벤트 핸들러 선언
+    if hasRootEvts then
+      foreach ev in rootCtrl.Events do
+      begin
+        var paramType := GetEventParamType(rootCtrl.TypeName, ev.Item1);
         sb.AppendLine(indent + indent + 'procedure ' + ev.Item2 +
           '(sender: System.Object; e: ' + paramType + ');');
       end;
@@ -359,26 +391,40 @@ begin
   sb.AppendLine('');
 
   // ── InitializeComponent ──────────────────────────────────────────────────
-  sb.Append(GenerateInitializeComponent(controls));
+  // ★ 수정: rootCtrl 을 함께 전달하여 루트 이벤트를 Self.Event += 로 구독하게 함
+  sb.Append(GenerateInitializeComponent(controls, rootCtrl));
   sb.AppendLine('');
 
   // ── 이벤트 핸들러 구현 스텁 ──────────────────────────────────────────────
-  if hasEvents then
+  if hasEvents or hasRootEvts then
   begin
     sb.AppendLine('// ── ' + TLoc.S('codegen.comment.event_impl') +
       ' ──────────────────────────────────');
     sb.AppendLine('');
+    // 일반 컨트롤 이벤트 스텁
     foreach ctrl in controls do
       foreach ev in ctrl.Events do
       begin
         var paramType := GetEventParamType(ctrl.TypeName, ev.Item1);
         // ★ 수정: 주석 형식 — "// ctrl.Event event handler" (공백 포함)
-        //   이전: ctrl.Name + '.' + ev.Item1 + TLoc.S('codegen.comment.event_handler')
-        //   → TLoc 값이 "이벤트 핸들러" 또는 "event handler" 인데, 한국어일 때는
-        //     앞에 공백이 없어 "btnHello.Click이벤트 핸들러" 처럼 붙었음.
-        //   수정: 항상 ' ' + TLoc.S(...) 로 공백을 명시 삽입.
         if fOptions.GenerateComments then
           sb.AppendLine('// ' + ctrl.Name + '.' + ev.Item1 +
+            ' ' + TLoc.S('codegen.comment.event_handler'));
+        sb.AppendLine('procedure ' + fClassName + '.' + ev.Item2 +
+          '(sender: System.Object; e: ' + paramType + ');');
+        sb.AppendLine('begin');
+        if fOptions.GenerateComments then
+          sb.AppendLine(indent + '// TODO: ' + ev.Item2);
+        sb.AppendLine('end;');
+        sb.AppendLine('');
+      end;
+    // ★ 추가: 루트 이벤트 핸들러 스텁
+    if hasRootEvts then
+      foreach ev in rootCtrl.Events do
+      begin
+        var paramType := GetEventParamType(rootCtrl.TypeName, ev.Item1);
+        if fOptions.GenerateComments then
+          sb.AppendLine('// ' + rootCtrl.TypeName + '.' + ev.Item1 +
             ' ' + TLoc.S('codegen.comment.event_handler'));
         sb.AppendLine('procedure ' + fClassName + '.' + ev.Item2 +
           '(sender: System.Object; e: ' + paramType + ');');
@@ -485,11 +531,11 @@ begin
   sb.AppendLine(indent + 'InitializeComponent;');
   sb.AppendLine('end;');
   sb.AppendLine('');
-  sb.Append(GenerateInitializeComponent(controls));
+  sb.Append(GenerateInitializeComponent(controls, nil));
   sb.AppendLine('');
   sb.AppendLine('end.');
 
-  Result := sb.ToString();
+  Result := sb.ToString(); 
 end;
 
 end.

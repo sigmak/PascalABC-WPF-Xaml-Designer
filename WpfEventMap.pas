@@ -23,7 +23,14 @@ const
     'ToolTipOpening', 'ToolTipClosing',
     'RequestBringIntoView', 'ManipulationStarted', 'ManipulationDelta',
     'ManipulationCompleted', 'Expanded', 'Collapsed',
-    'SelectedItemChanged', 'NodeExpanded', 'NodeCollapsed'
+    'SelectedItemChanged', 'NodeExpanded', 'NodeCollapsed',
+    // ★ 추가: Window 전용 이벤트
+    //   누락으로 인해 IsWpfEvent('Closing') = false → ParseRootControlInfo가
+    //   XAML 속성을 이벤트로 인식하지 못해 rootCtrl.Events가 비어 코드 생성 제외
+    'Closing', 'Closed', 'ContentRendered', 'StateChanged',
+    'LocationChanged', 'Activated', 'Deactivated',
+    // ★ 추가: UserControl / Page 전용
+    'Initialized'
   ];
 
 // -----------------------------------------------------------------------------
@@ -55,6 +62,14 @@ begin
 
     'ValueChanged':
       Result := 'System.Windows.RoutedPropertyChangedEventHandler<double>';
+
+    // ★ 추가: Window 전용 이벤트 델리게이트
+    'Closing':
+      Result := 'System.ComponentModel.CancelEventHandler';
+
+    'Closed', 'ContentRendered', 'Activated', 'Deactivated',
+    'StateChanged', 'LocationChanged', 'Initialized':
+      Result := 'System.EventHandler';
   else
     Result := 'System.EventHandler';
   end;
@@ -101,6 +116,16 @@ begin
 
     'DragEnter', 'DragLeave', 'DragOver', 'Drop':
       Result := 'System.Windows.DragEventArgs';
+
+    // ★ 추가: Window 전용 이벤트 파라미터 타입
+    //   Closing → CancelEventArgs  (e.Cancel := true 로 닫기 취소 가능)
+    //   나머지  → EventArgs
+    'Closing':
+      Result := 'System.ComponentModel.CancelEventArgs';
+
+    'Closed', 'ContentRendered', 'Activated', 'Deactivated',
+    'StateChanged', 'LocationChanged', 'Initialized':
+      Result := 'System.EventArgs';
   else
     Result := 'System.EventArgs';
   end;
@@ -179,8 +204,8 @@ begin
       specific := ['Expanded', 'Collapsed'];
 
     'Window':
-      specific := ['Loaded', 'Closed', 'Closing', 'ContentRendered',
-                   'StateChanged', 'LocationChanged'];
+      specific := ['Loaded', 'Closing', 'Closed', 'ContentRendered',
+                   'Activated', 'Deactivated', 'StateChanged', 'LocationChanged'];
 
     'Image':
       specific := [];

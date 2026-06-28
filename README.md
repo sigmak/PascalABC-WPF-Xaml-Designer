@@ -7,6 +7,13 @@ PascalABC.net 개발툴을 활용한 pascal wpf xaml Designer
 4. DockPanelSuite             : https://www.nuget.org/api/v2/package/DockPanelSuite/3.1.0
 5. DockPanelSuite.ThemeVS2015 : https://www.nuget.org/packages/DockPanelSuite.ThemeVS2015/
 
+[Ver 2.2.8]
+* 파일메뉴 수정
+
+* 프로젝트 파일 구조는 솔루션-프로젝트 2단계 구조로 수정
+<img src='https://github.com/sigmak/PascalABC-WPF-Xaml-Designer/blob/main/screenshot/ver-2-2-8.png' />
+
+
 [Ver 2.2.7]
 * Window 태그 이벤트 속성 지원되도록 수정.
 

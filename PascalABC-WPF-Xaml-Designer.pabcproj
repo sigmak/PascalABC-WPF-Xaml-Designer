@@ -16,6 +16,9 @@
     <Item Type="SourceFile" Name="LocalizationCore.pas" Path="LocalizationCore.pas" />
     <Item Type="SourceFile" Name="Strings_Common.pas" Path="Strings_Common.pas" />
     <Item Type="SourceFile" Name="Strings_Messages.pas" Path="Strings_Messages.pas" />
+    <Item Type="SourceFile" Name="IntelliSenseUnit.pas" Path="IntelliSenseUnit.pas" />
+    <Item Type="SourceFile" Name="NamespaceReflection.pas" Path="NamespaceReflection.pas" />
+    <Item Type="SourceFile" Name="ProjectFile.pas" Path="ProjectFile.pas" />
     <Item Type="Reference" AssemblyName="System" FullAssemblyName="System.dll" />
     <Item Type="Reference" AssemblyName="System.Windows.Forms" FullAssemblyName="System.Windows.Forms.dll" />
     <Item Type="Reference" AssemblyName="System.Drawing" FullAssemblyName="System.Drawing.dll" />

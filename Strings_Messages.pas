@@ -93,6 +93,27 @@ begin
      'Failed to save options: {0}',
      'Не удалось сохранить параметры: {0}']);
 
+  // 새 프로젝트 생성 직후 자동 저장(.pwsln/.pwproj/.pwproj.user) 실패 시
+  TLoc.Register('msg.error.new_project_save_failed',
+    ['새 프로젝트 파일을 저장하지 못했습니다. 출력 창을 확인하세요.',
+     'Failed to save the new project files. Check the Output window.',
+     'Не удалось сохранить файлы нового проекта. Проверьте окно вывода.']);
+
+  // .pwsln을 열었는데 내부에 유효한 프로젝트 참조가 없거나 대상 .pwproj가 없을 때
+  TLoc.Register('msg.error.solution_has_no_project',
+    ['솔루션 파일에 유효한 프로젝트가 없습니다.',
+     'The solution file does not reference a valid project.',
+     'Файл решения не содержит ссылку на допустимый проект.']);
+ 
+  // .pwproj.user(사용자 로컬 옵션) 로드 실패 시 — 기존 msg.error.save_options 패턴과 동일하게
+  // {0} = 예외 메시지
+  TLoc.Register('msg.error.load_options',
+    ['사용자 옵션 파일을 불러오지 못했습니다 (기본값 사용): {0}',
+     'Failed to load the local options file (using defaults): {0}',
+     'Не удалось загрузить локальный файл параметров (используются значения по умолчанию): {0}']);
+ 
+
+
   // ── 정보 메시지 ──────────────────────────────────────────────────────────
   TLoc.Register('msg.info.save_done',
     ['XAML: {0}' + System.Environment.NewLine +

@@ -33,6 +33,7 @@ uses
   WeifenLuo.WinFormsUI.Docking,
   // ── 분리된 유닛 ──────────────────────────────────────────────────────────
   ProjectOptions,        // TProjectOptions, TProjectType
+  ProjectFile,           // TProjectFile(.pwproj), TSolutionFile(.pwsln), MakeRelativePath
   ControlInfo,           // TControlInfo
   WpfEventMap,           // WPF_EVENTS, GetEventParamType, IsWpfEvent
   PascalHighlighting,    // CreatePascalHighlighting
@@ -57,7 +58,7 @@ uses
 //               자동으로 바뀝니다.
 // =============================================================================
 const
-  APP_VERSION = '2.2.7';
+  APP_VERSION = '2.2.8';
   APP_TITLE   = 'PascalABC-WPF-Designer';
 
 // =============================================================================
@@ -114,6 +115,8 @@ type
 
     // 프로젝트
     fProjectPath  : string;
+    fSolutionPath : string; // ★ 추가: 현재 솔루션(.pwsln) 파일의 전체 경로 ('' = 저장 전)
+    fProjFileName : string; // ★ 추가: 현재 프로젝트(.pwproj) 파일명(경로 제외)
     fXamlFileName : string;
     fPasFileName  : string;
     fProjectType  : TProjectType;
@@ -204,6 +207,11 @@ type
     fDlgBtnOk        : System.Windows.Forms.Button;
     fDlgBtnCancel    : System.Windows.Forms.Button;
     fDlgBtnApply     : System.Windows.Forms.Button;
+
+    // ★ 추가: 새 프로젝트 다이얼로그 — 경로 미리보기 갱신용 (UpdateNewProjectPathPreview 에서 참조)
+    fDlgNewProjTxtName       : System.Windows.Forms.TextBox;
+    fDlgNewProjChkSubfolder  : System.Windows.Forms.CheckBox;
+    fDlgNewProjLblPreview    : System.Windows.Forms.Label;
     
     fApplyXamlBtn : System.Windows.Controls.Button;
 
@@ -270,7 +278,11 @@ type
     // ── 파일 메뉴 ───────────────────────────────────────────────────────────
     procedure OnNewProject(sender: System.Object; e: System.EventArgs);
     procedure OnSave(sender: System.Object; e: System.EventArgs);
+    procedure OnSaveAs(sender: System.Object; e: System.EventArgs);
     procedure OnOpen(sender: System.Object; e: System.EventArgs);
+    procedure OnExit(sender: System.Object; e: System.EventArgs);
+    function  SaveCurrentProjectFiles(askForLocation: boolean): boolean;
+    procedure OpenSolutionOrProject(path: string);
 
     // ── XAML 관련 메뉴 ──────────────────────────────────────────────────────
     procedure OnApplyXaml(sender: System.Object; e: System.Windows.RoutedEventArgs);
@@ -342,11 +354,13 @@ type
 
     // ── 새 프로젝트 다이얼로그 / 생성 ──────────────────────────────────────
     function  ShowNewProjectDialog(var projType: TProjectType;
-                var projName: string; var projFolder: string): boolean;
+                var projName: string; var projFolder: string;
+                var createSubfolder: boolean): boolean;
     procedure CreateNewProject(projType: TProjectType;
-                projName: string; projFolder: string);
+                projName: string; projFolder: string; createSubfolder: boolean);
     procedure OnBrowseClick(sender: System.Object; e: System.EventArgs);
     procedure OnBrowseCompClick(sender: System.Object; e: System.EventArgs);
+    procedure UpdateNewProjectPathPreview(sender: System.Object; e: System.EventArgs);
 
     // ── 프로젝트 옵션 ───────────────────────────────────────────────────────
     procedure OnProjectOptions(sender: System.Object; e: System.EventArgs);
@@ -452,6 +466,8 @@ begin
   fOptions := new TProjectOptions();
 
   fProjectPath  := System.IO.Path.GetTempPath() + 'PascalWpfProject\';
+  fSolutionPath := ''; // 아직 저장되지 않은 임시 프로젝트
+  fProjFileName := 'MainWindow' + ProjectFile.PROJECT_FILE_EXT;
   fXamlFileName := 'MainWindow.xaml';
   fPasFileName  := 'MainWindow.pas';
   fProjectType  := ptWpfApp;
@@ -1264,12 +1280,15 @@ end;
 // 새 프로젝트 다이얼로그
 // =============================================================================
 function Form1.ShowNewProjectDialog(var projType: TProjectType;
-  var projName: string; var projFolder: string): boolean;
+  var projName: string; var projFolder: string;
+  var createSubfolder: boolean): boolean;
 var
   dlg       : System.Windows.Forms.Form;
   lstType   : System.Windows.Forms.ListBox;
   txtName   : System.Windows.Forms.TextBox;
   btnBrowse : System.Windows.Forms.Button;
+  chkSubfolder  : System.Windows.Forms.CheckBox;
+  lblPreview    : System.Windows.Forms.Label;
   fDlgBtnOk     : System.Windows.Forms.Button;
   fDlgBtnCancel : System.Windows.Forms.Button;
 begin
@@ -1278,10 +1297,11 @@ begin
   projName  := 'WpfApp1';
   projFolder := System.Environment.GetFolderPath(
     System.Environment.SpecialFolder.MyDocuments);
+  createSubfolder := true; // ★ VS 기본값과 동일: 기본 체크됨
 
   dlg        := new System.Windows.Forms.Form();
   TLoc.Bind(dlg, 'dlg.newproject.title');
-  dlg.Width  := 560; dlg.Height := 420;
+  dlg.Width  := 560; dlg.Height := 470;
   dlg.FormBorderStyle := System.Windows.Forms.FormBorderStyle.FixedDialog;
   dlg.StartPosition   := System.Windows.Forms.FormStartPosition.CenterParent;
   dlg.MaximizeBox := false; dlg.MinimizeBox := false;
@@ -1293,7 +1313,7 @@ begin
 
   lstType          := new System.Windows.Forms.ListBox();
   lstType.Left     := 16; lstType.Top := 36;
-  lstType.Width    := 510; lstType.Height := 140;
+  lstType.Width    := 510; lstType.Height := 130;
   lstType.Font     := new System.Drawing.Font('Segoe UI', 10);
   lstType.Items.Add(TLoc.S('dlg.newproject.type_app'));
   lstType.Items.Add(TLoc.S('dlg.newproject.type_lib'));
@@ -1301,59 +1321,91 @@ begin
 
   var lblName      := new System.Windows.Forms.Label();
   TLoc.Bind(lblName, 'dlg.newproject.name_label');
-  lblName.Left := 16; lblName.Top := 196; lblName.Width := 200;
+  lblName.Left := 16; lblName.Top := 184; lblName.Width := 200;
   lblName.Font := new System.Drawing.Font('Segoe UI', 9, System.Drawing.FontStyle.Bold);
 
   txtName          := new System.Windows.Forms.TextBox();
-  txtName.Left     := 16; txtName.Top := 216;
+  txtName.Left     := 16; txtName.Top := 204;
   txtName.Width    := 510; txtName.Height := 26;
   txtName.Text     := 'WpfApp1';
   txtName.Font     := new System.Drawing.Font('Segoe UI', 10);
+  fDlgNewProjTxtName := txtName; // ★ 추가: UpdateNewProjectPathPreview 에서 참조
 
   var lblFolder      := new System.Windows.Forms.Label();
   TLoc.Bind(lblFolder, 'dlg.newproject.folder_label');
-  lblFolder.Left := 16; lblFolder.Top := 256; lblFolder.Width := 200;
+  lblFolder.Left := 16; lblFolder.Top := 244; lblFolder.Width := 200;
   lblFolder.Font := new System.Drawing.Font('Segoe UI', 9, System.Drawing.FontStyle.Bold);
 
   fDlgTxtFolder        := new System.Windows.Forms.TextBox();
-  fDlgTxtFolder.Left   := 16; fDlgTxtFolder.Top := 276;
+  fDlgTxtFolder.Left   := 16; fDlgTxtFolder.Top := 264;
   fDlgTxtFolder.Width  := 420; fDlgTxtFolder.Height := 26;
   fDlgTxtFolder.Text   := projFolder;
   fDlgTxtFolder.Font   := new System.Drawing.Font('Segoe UI', 10);
 
   btnBrowse        := new System.Windows.Forms.Button();
-  btnBrowse.Left   := 444; btnBrowse.Top := 274;
+  btnBrowse.Left   := 444; btnBrowse.Top := 262;
   btnBrowse.Width  := 82; btnBrowse.Height := 28;
   TLoc.Bind(btnBrowse, 'btn.browse');
   btnBrowse.Click  += OnBrowseClick;
 
+  // ★ 추가: "솔루션을 위한 디렉터리 만들기" 체크박스 (VS 2022 동일 문구/기본값)
+  chkSubfolder          := new System.Windows.Forms.CheckBox();
+  TLoc.Bind(chkSubfolder, 'dlg.newproject.create_subfolder');
+  chkSubfolder.Left     := 16; chkSubfolder.Top := 300;
+  chkSubfolder.Width    := 510; chkSubfolder.Height := 24;
+  chkSubfolder.Checked  := true; // 기본 체크됨
+  fDlgNewProjChkSubfolder := chkSubfolder; // ★ 추가: UpdateNewProjectPathPreview 에서 참조
+
+  // ★ 추가: 실제 생성될 경로를 VS처럼 미리 보여주는 안내 줄
+  lblPreview        := new System.Windows.Forms.Label();
+  lblPreview.Left   := 16; lblPreview.Top := 328;
+  lblPreview.Width  := 510; lblPreview.Height := 20;
+  lblPreview.ForeColor := System.Drawing.SystemColors.GrayText;
+  lblPreview.Font   := new System.Drawing.Font('Segoe UI', 9);
+  fDlgNewProjLblPreview := lblPreview; // ★ 추가: UpdateNewProjectPathPreview 에서 참조
+
+  // ★ 수정: 람다 대신 이름 있는 메서드(UpdateNewProjectPathPreview)를 핸들러로 등록.
+  //   PascalABC.NET 에서는 중첩 서브루틴 내부의 람다 사용이 불안정하므로
+  //   기존 코드베이스 관례(이름 있는 메서드 + 클래스 필드)를 그대로 따른다.
+  txtName.TextChanged          += UpdateNewProjectPathPreview;
+  fDlgTxtFolder.TextChanged    += UpdateNewProjectPathPreview;
+  chkSubfolder.CheckedChanged  += UpdateNewProjectPathPreview;
+  UpdateNewProjectPathPreview(nil, System.EventArgs.Empty);
+
   fDlgBtnOk              := new System.Windows.Forms.Button();
   TLoc.Bind(fDlgBtnOk, 'btn.ok');
-  fDlgBtnOk.Left         := 356; fDlgBtnOk.Top := 340;
+  fDlgBtnOk.Left         := 356; fDlgBtnOk.Top := 390;
   fDlgBtnOk.Width        := 80; fDlgBtnOk.Height := 30;
   fDlgBtnOk.DialogResult := System.Windows.Forms.DialogResult.OK;
 
   fDlgBtnCancel              := new System.Windows.Forms.Button();
   TLoc.Bind(fDlgBtnCancel, 'btn.cancel');
-  fDlgBtnCancel.Left         := 444; fDlgBtnCancel.Top := 340;
+  fDlgBtnCancel.Left         := 444; fDlgBtnCancel.Top := 390;
   fDlgBtnCancel.Width        := 80; fDlgBtnCancel.Height := 30;
   fDlgBtnCancel.DialogResult := System.Windows.Forms.DialogResult.Cancel;
 
   dlg.Controls.Add(lblType);   dlg.Controls.Add(lstType);
   dlg.Controls.Add(lblName);   dlg.Controls.Add(txtName);
   dlg.Controls.Add(lblFolder); dlg.Controls.Add(fDlgTxtFolder);
-  dlg.Controls.Add(btnBrowse); dlg.Controls.Add(fDlgBtnOk); dlg.Controls.Add(fDlgBtnCancel);
+  dlg.Controls.Add(btnBrowse);
+  dlg.Controls.Add(chkSubfolder);
+  dlg.Controls.Add(lblPreview);
+  dlg.Controls.Add(fDlgBtnOk); dlg.Controls.Add(fDlgBtnCancel);
   dlg.AcceptButton := fDlgBtnOk;
   dlg.CancelButton := fDlgBtnCancel;
 
   if dlg.ShowDialog() = System.Windows.Forms.DialogResult.OK then
   begin
-    projType   := (if lstType.SelectedIndex = 1 then ptWpfControlLibrary else ptWpfApp);
-    projName   := txtName.Text.Trim();
-    projFolder := fDlgTxtFolder.Text.Trim();
-    Result     := true;
+    projType        := (if lstType.SelectedIndex = 1 then ptWpfControlLibrary else ptWpfApp);
+    projName        := txtName.Text.Trim();
+    projFolder       := fDlgTxtFolder.Text.Trim();
+    createSubfolder := chkSubfolder.Checked;
+    Result           := true;
   end;
-  fDlgTxtFolder := nil;
+  fDlgTxtFolder           := nil;
+  fDlgNewProjTxtName      := nil;
+  fDlgNewProjChkSubfolder := nil;
+  fDlgNewProjLblPreview   := nil;
 end;
 
 procedure Form1.OnBrowseClick(sender: System.Object; e: System.EventArgs);
@@ -1363,6 +1415,26 @@ begin
   fd.SelectedPath := fDlgTxtFolder.Text;
   if fd.ShowDialog() = System.Windows.Forms.DialogResult.OK then
     fDlgTxtFolder.Text := fd.SelectedPath;
+end;
+
+// ★ 추가: 새 프로젝트 다이얼로그의 이름/폴더/하위폴더 체크박스가 바뀔 때마다
+//   실제로 생성될 .pwproj 경로를 미리 보여준다 (VS 2022의 "위치 미리보기"와 동일한 역할).
+procedure Form1.UpdateNewProjectPathPreview(sender: System.Object; e: System.EventArgs);
+var folder, name: string;
+begin
+  if (fDlgNewProjTxtName = nil) or (fDlgTxtFolder = nil) or
+     (fDlgNewProjChkSubfolder = nil) or (fDlgNewProjLblPreview = nil) then exit;
+
+  folder := fDlgTxtFolder.Text.Trim();
+  name   := fDlgNewProjTxtName.Text.Trim();
+  if name = '' then name := '?';
+
+  if fDlgNewProjChkSubfolder.Checked then
+    fDlgNewProjLblPreview.Text := TLoc.F('dlg.newproject.path_preview',
+      folder + '\' + name + '\' + name + ProjectFile.PROJECT_FILE_EXT)
+  else
+    fDlgNewProjLblPreview.Text := TLoc.F('dlg.newproject.path_preview',
+      folder + '\' + name + ProjectFile.PROJECT_FILE_EXT);
 end;
 
 procedure Form1.OnBrowseCompClick(sender: System.Object; e: System.EventArgs);
@@ -1379,17 +1451,25 @@ end;
 // 새 프로젝트 생성
 // =============================================================================
 procedure Form1.CreateNewProject(projType: TProjectType;
-  projName: string; projFolder: string);
+  projName: string; projFolder: string; createSubfolder: boolean);
 var
   defaultXaml: string;
 begin
   KillPreviousBuildProcesses();
 
-  fProjectPath  := projFolder + '\' + projName + '\';
+  // ★ VS 방식: 체크박스가 켜져 있으면 "폴더\프로젝트명\" 하위 폴더를 만들고,
+  //   꺼져 있으면 선택한 폴더에 바로 생성한다 (예: 단일 프로젝트를 기존 폴더에 추가할 때).
+  if createSubfolder then
+    fProjectPath := projFolder + '\' + projName + '\'
+  else
+    fProjectPath := projFolder + '\';
+
   fProjectType  := projType;
   fClassName    := projName;
   fNamespace    := projName;
+  fProjFileName := projName + ProjectFile.PROJECT_FILE_EXT;
 
+  fOptions := new TProjectOptions(); // ★ 추가: 새 프로젝트는 사용자 옵션도 기본값으로 초기화
   fOptions.ProjectName   := projName;
   fOptions.RootNamespace := projName;
   fOptions.ClassName     := projName;
@@ -1438,18 +1518,23 @@ begin
   SetCodeEditorText(GenerateCode());
   ApplyCodeHighlighting();
   if fOptions.CodeFolding then EnableCodeFolding();
-  Self.Text := TLoc.S('title.main_app') + ' — ' + fProjectPath;
-  RefreshSolutionExplorer();
+
+  // ★ 추가: VS는 "새 프로젝트"를 만들면 그 즉시 .sln/.csproj를 디스크에 쓴다.
+  //   동일하게 .pwsln/.pwproj/.pwproj.user/.xaml/.pas를 바로 저장해 둔다.
+  //   (SaveCurrentProjectFiles 내부에서 Self.Text / RefreshSolutionExplorer 까지 처리함)
+  if not SaveCurrentProjectFiles(false) then
+    AppendOutput(TLoc.S('msg.error.new_project_save_failed'), true);
 end;
 
 procedure Form1.OnNewProject(sender: System.Object; e: System.EventArgs);
 var
-  projType  : TProjectType;
-  projName  : string;
-  projFolder: string;
+  projType        : TProjectType;
+  projName        : string;
+  projFolder      : string;
+  createSubfolder : boolean;
 begin
-  if ShowNewProjectDialog(projType, projName, projFolder) then
-    CreateNewProject(projType, projName, projFolder);
+  if ShowNewProjectDialog(projType, projName, projFolder, createSubfolder) then
+    CreateNewProject(projType, projName, projFolder, createSubfolder);
 end;
 
 // =============================================================================
@@ -1884,116 +1969,201 @@ begin
 end;
 
 // =============================================================================
-// 저장 / 열기
+// 저장 / 열기  (Visual Studio 방식: 솔루션(.pwsln) + 프로젝트(.pwproj) 한 번에 저장)
 // =============================================================================
-procedure Form1.OnSave(sender: System.Object; e: System.EventArgs);
-var dlg: System.Windows.Forms.SaveFileDialog;
-begin
-  dlg          := new System.Windows.Forms.SaveFileDialog();
-  dlg.Filter   := TLoc.S('dlg.save.filter'); //'XAML 파일|*.xaml|모든 파일|*.*';
-  dlg.FileName := fXamlFileName;
-  dlg.InitialDirectory := fProjectPath;
-  if dlg.ShowDialog() = System.Windows.Forms.DialogResult.OK then
-  begin
-    System.IO.File.WriteAllText(dlg.FileName, fXamlEditor.Text, System.Text.Encoding.UTF8);
-    var pasPath := System.IO.Path.ChangeExtension(dlg.FileName, '.pas');
-    System.IO.File.WriteAllText(pasPath, fCodeEditor.Text, System.Text.Encoding.UTF8);
-    fProjectPath  := System.IO.Path.GetDirectoryName(dlg.FileName) + '\';
-    fXamlFileName := System.IO.Path.GetFileName(dlg.FileName);
-    fPasFileName  := System.IO.Path.GetFileName(pasPath);
 
-    // ★ 추가: 프로젝트 옵션을 .opts 파일로 저장
+// 현재 메모리 상태(XAML/코드/옵션)를 fProjectPath 에 있는 그대로 저장한다.
+// askForLocation = true  → "다른 이름으로 저장" (폴더 선택 다이얼로그, VS의 Save As와 동일)
+// askForLocation = false → 이미 알고 있는 fProjectPath/fSolutionPath 에 조용히 저장
+//                          (Ctrl+S, 새 프로젝트 생성 직후 등)
+function Form1.SaveCurrentProjectFiles(askForLocation: boolean): boolean;
+var
+  targetFolder, solutionName: string;
+  fd: System.Windows.Forms.FolderBrowserDialog;
+begin
+  Result := false;
+  targetFolder := fProjectPath;
+
+  if askForLocation or (fProjectPath.Trim() = '') then
+  begin
+    // ★ "다른 이름으로 저장": VS도 솔루션을 저장할 폴더만 물어보고,
+    //   파일명(프로젝트명)은 이미 정해져 있으므로 폴더 선택 다이얼로그를 사용한다.
+    fd := new System.Windows.Forms.FolderBrowserDialog();
+    fd.Description := TLoc.S('dlg.saveas.folder_description');
+    if System.IO.Directory.Exists(targetFolder) then
+      fd.SelectedPath := targetFolder;
+    if fd.ShowDialog() <> System.Windows.Forms.DialogResult.OK then exit;
+    targetFolder := fd.SelectedPath;
+    if not targetFolder.EndsWith('\') then targetFolder := targetFolder + '\';
+  end;
+
+  try
+    if not System.IO.Directory.Exists(targetFolder) then
+      System.IO.Directory.CreateDirectory(targetFolder);
+
+    fProjectPath := targetFolder;
     fOptions.ProjectPath := fProjectPath;
-    try
-      var optsPath := fProjectPath + System.IO.Path.GetFileNameWithoutExtension(fXamlFileName) + '.opts';
-      fOptions.SaveToFile(optsPath);
-    except
-      on ex: System.Exception do
-        //AppendOutput(TLoc.F('msg.error.save_options', [ex.Message]), true);
-        // ✅ 수정
-        AppendOutput(TLoc.F('msg.error.save_options', ex.Message), true);        
+
+    // 1) XAML / Pascal 소스 저장
+    var xamlPath := fProjectPath + fXamlFileName;
+    var pasPath  := fProjectPath + fPasFileName;
+    System.IO.File.WriteAllText(xamlPath, fXamlEditor.Text, System.Text.Encoding.UTF8);
+    System.IO.File.WriteAllText(pasPath,  fCodeEditor.Text, System.Text.Encoding.UTF8);
+
+    // 2) 프로젝트 파일(.pwproj) 저장 — VS의 .csproj와 동일한 역할(공유 가능한 프로젝트 정의)
+    if fProjFileName.Trim() = '' then
+      fProjFileName := fOptions.ProjectName + ProjectFile.PROJECT_FILE_EXT;
+    var projPath := fProjectPath + fProjFileName;
+    var pf := new TProjectFile();
+    pf.ProjectName   := fOptions.ProjectName;
+    pf.RootNamespace := fOptions.RootNamespace;
+    pf.ClassName      := fOptions.ClassName;
+    pf.ProjectType    := fProjectType;
+    pf.XamlFileName   := fXamlFileName;
+    pf.PasFileName    := fPasFileName;
+    pf.SaveToFile(projPath);
+
+    // 3) 사용자 로컬 옵션(.pwproj.user) 저장 — VS의 .csproj.user와 동일
+    //    (컴파일러 경로, 에디터 폰트 등 — git에 올리지 않는 개인 설정)
+    var userOptsPath := fProjectPath + fProjFileName + '.user'; // 'WpfApp1.pwproj' + '.user'
+    fOptions.SaveToFile(userOptsPath);
+
+    // 4) 솔루션 파일(.pwsln) 저장 — 솔루션 폴더는 프로젝트 폴더의 부모(하위 폴더 구성 시)
+    //    또는 프로젝트 폴더 자체(하위 폴더 없이 만든 경우)
+    if fSolutionPath.Trim() = '' then
+    begin
+      solutionName := fOptions.ProjectName;
+      // 하위 폴더 구조라면 솔루션은 한 단계 위에, 아니라면 같은 폴더에 둔다.
+      var projFolderTrim := fProjectPath.TrimEnd(['\']);
+      var parentFolder := System.IO.Path.GetDirectoryName(projFolderTrim) + '\';
+      if System.IO.Path.GetFileName(projFolderTrim) = fOptions.ProjectName then
+        fSolutionPath := parentFolder + solutionName + ProjectFile.SOLUTION_FILE_EXT
+      else
+        fSolutionPath := fProjectPath + solutionName + ProjectFile.SOLUTION_FILE_EXT;
     end;
 
-    Self.Text := TLoc.S('title.main_app') + ' — ' + fProjectPath;
+    var slnFolder := System.IO.Path.GetDirectoryName(fSolutionPath) + '\';
+    if not System.IO.Directory.Exists(slnFolder) then
+      System.IO.Directory.CreateDirectory(slnFolder);
+
+    var sf := new TSolutionFile();
+    sf.SolutionName := System.IO.Path.GetFileNameWithoutExtension(fSolutionPath);
+    sf.ProjectRelPaths.Add(ProjectFile.MakeRelativePath(slnFolder, projPath));
+    sf.SaveToFile(fSolutionPath);
+
+    Self.Text := TLoc.S('title.main_app') + ' — ' + fSolutionPath;
     RefreshSolutionExplorer();
-{    
-    System.Windows.Forms.MessageBox.Show(
-      TLoc.F('msg.info.save_done', [dlg.FileName, pasPath]),
-      TLoc.S('title.info'), System.Windows.Forms.MessageBoxButtons.OK,
-      System.Windows.Forms.MessageBoxIcon.Information);
-}
-    // ✅ 수정
-    System.Windows.Forms.MessageBox.Show(
-      TLoc.F('msg.info.save_done', dlg.FileName, pasPath),
-      TLoc.S('title.info'), System.Windows.Forms.MessageBoxButtons.OK,
-      System.Windows.Forms.MessageBoxIcon.Information);
-     
+    Result := true;
+  except
+    on ex: System.Exception do
+      AppendOutput(TLoc.F('msg.error.save_options', ex.Message), true);
   end;
 end;
 
-procedure Form1.OnOpen(sender: System.Object; e: System.EventArgs);
-var
-  dlg    : System.Windows.Forms.OpenFileDialog;
-  xaml   : string;
-  pasPath: string;
+procedure Form1.OnSave(sender: System.Object; e: System.EventArgs);
 begin
-  dlg        := new System.Windows.Forms.OpenFileDialog();
-  dlg.Filter := TLoc.S('dlg.open.filter'); //'XAML 파일|*.xaml|모든 파일|*.*';
-  if dlg.ShowDialog() <> System.Windows.Forms.DialogResult.OK then exit;
+  // ★ Ctrl+S / 저장 메뉴: 위치를 다시 묻지 않고 알고 있는 경로에 그대로 저장(VS와 동일)
+  if SaveCurrentProjectFiles(false) then
+    AppendOutput(TLoc.F('msg.info.save_done', fSolutionPath, fProjectPath), false);
+end;
 
+procedure Form1.OnSaveAs(sender: System.Object; e: System.EventArgs);
+begin
+  // ★ "다른 이름으로 저장": 폴더를 새로 고르고, 그 경로를 이후의 기본 저장 위치로 갱신
+  fSolutionPath := ''; // 새 위치를 기준으로 .pwsln 경로를 다시 계산하도록 초기화
+  if SaveCurrentProjectFiles(true) then
+    System.Windows.Forms.MessageBox.Show(
+      TLoc.F('msg.info.save_done', fSolutionPath, fProjectPath),
+      TLoc.S('title.info'), System.Windows.Forms.MessageBoxButtons.OK,
+      System.Windows.Forms.MessageBoxIcon.Information);
+end;
+
+// .pwsln 또는 .pwproj 파일을 열어 현재 작업 상태를 그 프로젝트로 교체한다.
+procedure Form1.OpenSolutionOrProject(path: string);
+var
+  ext, projPath, xaml, pasPath: string;
+  sf: TSolutionFile;
+  pf: TProjectFile;
+begin
+  ext := System.IO.Path.GetExtension(path).ToLower();
   try
-    xaml := System.IO.File.ReadAllText(dlg.FileName);
+    if ext = ProjectFile.SOLUTION_FILE_EXT then
+    begin
+      sf := new TSolutionFile();
+      sf.LoadFromFile(path);
+      fSolutionPath := path;
+      var slnFolder := System.IO.Path.GetDirectoryName(path) + '\';
+      projPath := sf.FirstProjectAbsolutePath(slnFolder);
+      if (projPath = '') or not System.IO.File.Exists(projPath) then
+      begin
+        System.Windows.Forms.MessageBox.Show(TLoc.S('msg.error.solution_has_no_project'),
+          TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
+          System.Windows.Forms.MessageBoxIcon.Error);
+        exit;
+      end;
+    end
+    else
+    begin
+      // .pwproj를 직접 연 경우: 솔루션은 같은 폴더에서 같은 이름으로 추정해 찾고,
+      // 없으면 솔루션 없이(프로젝트만) 연다 — VS에서도 .csproj 단독으로 열 수 있다.
+      projPath := path;
+      var folder := System.IO.Path.GetDirectoryName(path) + '\';
+      var guessSln := folder + System.IO.Path.GetFileNameWithoutExtension(path) + ProjectFile.SOLUTION_FILE_EXT;
+      fSolutionPath := (if System.IO.File.Exists(guessSln) then guessSln else '');
+    end;
+
+    pf := new TProjectFile();
+    pf.LoadFromFile(projPath);
   except
     on ex: System.Exception do
     begin
-{      
-      System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.read_file', [ex.Message]),
-        TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
-        System.Windows.Forms.MessageBoxIcon.Error);
-}
-      // ✅ 수정
       System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.read_file', ex.Message),
         TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
         System.Windows.Forms.MessageBoxIcon.Error);
-        
       exit;
     end;
   end;
 
+  fProjectPath  := System.IO.Path.GetDirectoryName(projPath) + '\';
+  fProjFileName := System.IO.Path.GetFileName(projPath);
+  fXamlFileName := pf.XamlFileName;
+  fPasFileName  := pf.PasFileName;
+  fProjectType  := pf.ProjectType;
+  fNamespace    := pf.RootNamespace;
+  fClassName    := pf.ClassName;
+
+  var xamlPath := fProjectPath + fXamlFileName;
+  if not System.IO.File.Exists(xamlPath) then
+  begin
+    System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.read_file', xamlPath),
+      TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
+      System.Windows.Forms.MessageBoxIcon.Error);
+    exit;
+  end;
+  xaml := System.IO.File.ReadAllText(xamlPath);
+
   KillPreviousBuildProcesses();
-  fProjectPath  := System.IO.Path.GetDirectoryName(dlg.FileName) + '\';
-  fXamlFileName := System.IO.Path.GetFileName(dlg.FileName);
-  fPasFileName  := System.IO.Path.ChangeExtension(fXamlFileName, '.pas');
-  Self.Text     := APP_TITLE + ' — ' + fProjectPath;
+  Self.Text := TLoc.S('title.main_app') + ' — ' +
+    (if fSolutionPath <> '' then fSolutionPath else fProjectPath);
 
   ParseXClassInfo(xaml, fNamespace, fClassName);
-  fProjectType := (if xaml.Contains('<UserControl') then ptWpfControlLibrary else ptWpfApp);
 
-  // ★ 수정: .opts 파일이 있으면 저장된 옵션을 로드하고, 없으면 XAML에서 파싱한 값만 적용
-  //   이전 코드는 열기 때마다 ProjectPath/Type/Namespace/ClassName만 갱신하고
-  //   AssemblyVersion 등 나머지 값은 초기값(1.0.0.0)으로 남아 있었음
-  var optsPath := fProjectPath + System.IO.Path.GetFileNameWithoutExtension(fXamlFileName) + '.opts';
-  if System.IO.File.Exists(optsPath) then
+  // ★ 사용자 로컬 옵션(.pwproj.user) 로드 — 없으면 .pwproj 정보 + 기본값으로 구성
+  var userOptsPath := fProjectPath + fProjFileName + '.user';
+  if System.IO.File.Exists(userOptsPath) then
   begin
     try
-      fOptions.LoadFromFile(optsPath);
+      fOptions.LoadFromFile(userOptsPath);
     except
       on ex: System.Exception do
-        AppendOutput('옵션 파일 로드 실패 (기본값 사용): ' + ex.Message, true);
+        AppendOutput(TLoc.F('msg.error.load_options', ex.Message), true);
     end;
-    // XAML에서 파싱된 최신 값으로 덮어쓰기 (네임스페이스/클래스명은 XAML이 정답)
-    fOptions.ProjectPath   := fProjectPath;
-    fOptions.ProjectType   := fProjectType;
-    fOptions.RootNamespace := fNamespace;
-    fOptions.ClassName     := fClassName;
-  end
-  else
-  begin
-    fOptions.ProjectPath   := fProjectPath;
-    fOptions.ProjectType   := fProjectType;
-    fOptions.RootNamespace := fNamespace;
-    fOptions.ClassName     := fClassName;
   end;
+  fOptions.ProjectPath   := fProjectPath;
+  fOptions.ProjectType   := fProjectType;
+  fOptions.ProjectName   := pf.ProjectName;
+  fOptions.RootNamespace := fNamespace;
+  fOptions.ClassName     := fClassName;
 
   LoadXaml(xaml);
 
@@ -2006,6 +2176,25 @@ begin
   ApplyCodeHighlighting();
   if fOptions.CodeFolding then EnableCodeFolding();
   RefreshSolutionExplorer();
+end;
+
+procedure Form1.OnOpen(sender: System.Object; e: System.EventArgs);
+var dlg: System.Windows.Forms.OpenFileDialog;
+begin
+  // ★ VS 방식: "파일 열기"가 곧 "프로젝트/솔루션 열기" — XAML을 직접 열지 않는다.
+  dlg        := new System.Windows.Forms.OpenFileDialog();
+  dlg.Filter := TLoc.S('dlg.open.filter');
+  // 'PascalABC-WPF 솔루션|*.pwsln|PascalABC-WPF 프로젝트|*.pwproj|모든 파일|*.*'
+  if dlg.ShowDialog() <> System.Windows.Forms.DialogResult.OK then exit;
+  OpenSolutionOrProject(dlg.FileName);
+end;
+
+// =============================================================================
+// 종료
+// =============================================================================
+procedure Form1.OnExit(sender: System.Object; e: System.EventArgs);
+begin
+  Self.Close(); // OnFormClosing에서 빌드 프로세스 정리 및 IntelliSense 해제를 이미 처리함
 end;
 
 // =============================================================================
@@ -3604,13 +3793,21 @@ procedure Form1.RefreshSolutionExplorer;
 var
   rootNode, projNode, fileNode: System.Windows.Forms.TreeNode;
   files: array of string;
-  f, ext, fname, icon: string;
+  f, ext, fname, icon, rootLabel: string;
 begin
   if trvSolution = nil then exit;
   trvSolution.BeginUpdate();
   trvSolution.Nodes.Clear();
+
+  // ★ 수정: 솔루션이 아직 저장되지 않았으면 임시 상태임을 표시,
+  //   저장되었으면 .pwsln 파일명을 VS 솔루션 탐색기처럼 루트에 표시
+  if fSolutionPath.Trim() <> '' then
+    rootLabel := System.IO.Path.GetFileNameWithoutExtension(fSolutionPath)
+  else
+    rootLabel := fNamespace;
   rootNode     := new System.Windows.Forms.TreeNode(
-     TLoc.F('explorer.solution_root', fNamespace));//'솔루션 ' + #39 + fNamespace + #39 + ' (1개 프로젝트)');
+     TLoc.F('explorer.solution_root', rootLabel));//'솔루션 ' + #39 + rootLabel + #39 + ' (1개 프로젝트)');
+  rootNode.Tag := fSolutionPath;
   projNode     := new System.Windows.Forms.TreeNode(fNamespace);
   projNode.Tag := fProjectPath;
 
@@ -3620,9 +3817,14 @@ begin
     System.Array.Sort(files);
     foreach f in files do
     begin
-      ext   := System.IO.Path.GetExtension(f).ToLower();
       fname := System.IO.Path.GetFileName(f);
-      case ext of
+      ext   := System.IO.Path.GetExtension(f).ToLower();
+      // .pwproj.user 는 GetExtension이 '.user'만 잡으므로 먼저 따로 체크
+      if fname.ToLower().EndsWith(ProjectFile.PROJECT_FILE_EXT + '.user') then
+        icon := '🔒 '   // 사용자 로컬 옵션 (git에 포함되지 않는 개인 설정)
+      else case ext of
+        ProjectFile.SOLUTION_FILE_EXT: icon := '🗂 '; // .pwsln
+        ProjectFile.PROJECT_FILE_EXT : icon := '🧩 '; // .pwproj
         '.xaml': icon := '📄 ';
         '.pas' : icon := '💻 ';
         '.exe' : icon := '⚙ ';
@@ -3656,6 +3858,9 @@ begin
   else if (ext = '.pas') and
           (System.IO.Path.GetFileName(path).ToLower() = fPasFileName.ToLower()) then
     tabControl.SelectedTab := tabCode
+  else if (ext = ProjectFile.SOLUTION_FILE_EXT) or (ext = ProjectFile.PROJECT_FILE_EXT) then
+    // ★ 추가: 탐색기에서 .pwsln/.pwproj를 더블클릭하면 해당 프로젝트를 다시 로드(VS와 동일 동작)
+    OpenSolutionOrProject(path)
   else
   try System.Diagnostics.Process.Start('explorer.exe', '/select,"' + path + '"');
   except end;
@@ -3683,7 +3888,7 @@ end;
 procedure Form1.BuildMenu;
 var
   fileMenu, viewMenu, buildMenu, projMenu, helpMenu: System.Windows.Forms.ToolStripMenuItem;
-  newItem, openItem, saveItem, applyItem, syncItem  : System.Windows.Forms.ToolStripMenuItem;
+  newItem, openItem, saveItem, saveAsItem, exitItem, applyItem, syncItem  : System.Windows.Forms.ToolStripMenuItem;
   buildItem, runItem, aboutItem, projOptItem         : System.Windows.Forms.ToolStripMenuItem;
   toolboxViewItem, explorerViewItem, propsViewItem   : System.Windows.Forms.ToolStripMenuItem;
   outputViewItem, errorsViewItem                     : System.Windows.Forms.ToolStripMenuItem;
@@ -3702,12 +3907,23 @@ begin
   TLoc.Bind(openItem, 'menu.file.open');
   saveItem := new System.Windows.Forms.ToolStripMenuItem();
   TLoc.Bind(saveItem, 'menu.file.save');
-  newItem.Click  += OnNewProject;
-  openItem.Click += OnOpen;
-  saveItem.Click += OnSave;
+  saveAsItem := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(saveAsItem, 'menu.file.save_as');
+  exitItem := new System.Windows.Forms.ToolStripMenuItem();
+  TLoc.Bind(exitItem, 'menu.file.exit');
+  newItem.Click    += OnNewProject;
+  openItem.Click   += OnOpen;
+  saveItem.Click   += OnSave;
+  saveAsItem.Click += OnSaveAs;
+  exitItem.Click   += OnExit;
   fileMenu.DropDownItems.Add(newItem);
   fileMenu.DropDownItems.Add(openItem);
+  fileMenu.DropDownItems.Add(new System.Windows.Forms.ToolStripSeparator());
   fileMenu.DropDownItems.Add(saveItem);
+  fileMenu.DropDownItems.Add(saveAsItem);
+  // ★ 추가: 파일 메뉴 맨 마지막 — 프로그램 종료 (VS/대부분의 최신 개발툴과 동일한 위치)
+  fileMenu.DropDownItems.Add(new System.Windows.Forms.ToolStripSeparator());
+  fileMenu.DropDownItems.Add(exitItem);
 
   // 프로젝트
   projMenu    := new System.Windows.Forms.ToolStripMenuItem();
@@ -4768,8 +4984,10 @@ end;
 
 procedure Form1.OnSettingsLanguageChanged;
 begin
-  // 폼 제목
-  if fProjectPath <> '' then
+  // 폼 제목 — ★ 수정: 솔루션이 저장되어 있으면 .pwsln 경로를, 아니면 프로젝트 폴더를 표시
+  if fSolutionPath <> '' then
+    Self.Text := TLoc.S('title.main_app') + ' — ' + fSolutionPath
+  else if fProjectPath <> '' then
     Self.Text := TLoc.S('title.main_app') + ' — ' + fProjectPath
   else
     Self.Text := TLoc.S('title.main_app');

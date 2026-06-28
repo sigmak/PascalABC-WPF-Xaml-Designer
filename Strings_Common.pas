@@ -34,6 +34,11 @@ begin
   TLoc.Register('menu.file.new',      ['새 프로젝트(&N)...',   'New Project(&N)...',   'Новый проект(&N)...']);
   TLoc.Register('menu.file.open',     ['열기(&O)...',          'Open(&O)...',          'Открыть(&O)...']);
   TLoc.Register('menu.file.save',     ['저장(&S)',             'Save(&S)',             'Сохранить(&S)']);
+  
+  TLoc.Register('menu.file.save_as',     ['다른 이름으로 저장(&A)...',             'Save &As...',             'Сохранить &как...']);
+  TLoc.Register('menu.file.exit',     ['종료(&X)',             'E&xit',             '&Выход']);
+ 
+
 
   // ── 프로젝트 메뉴 ────────────────────────────────────────────────────────
   TLoc.Register('menu.project',           ['프로젝트(&P)',                    'Project(&P)',                    'Проект(&P)']);
@@ -97,6 +102,13 @@ begin
     ['WPF 사용자 정의 컨트롤 라이브러리  (.dll)',
      'WPF Custom Control Library     (.dll)',
      'Библиотека элементов WPF       (.dll)']);
+
+  TLoc.Register('dlg.newproject.create_subfolder', ['프로젝트와 같은 이름의 폴더에 솔루션 만들기',           'Place project in a folder with the same name',     'Создать каталог для решения с именем проекта']);
+
+  TLoc.Register('dlg.newproject.path_preview', ['위치: {0}',           'Location: {0}',     'Расположение: {0}']);
+ 
+  TLoc.Register('dlg.saveas.folder_description', ['솔루션을 저장할 폴더를 선택하세요.',           'Select the folder where the solution will be saved.',     'Выберите папку для сохранения решения.']);
+
 
   // ── 설정(Настройки) 다이얼로그 — 첨부 이미지 기준 ───────────────────────
   // 좌측 내비게이션
@@ -242,8 +254,14 @@ begin
   // 파일 대화상자
   TLoc.Register('dlg.browse_compiler.filter', ['실행 파일|pabcnetc.exe|모든 파일|*.*', 'Executable|pabcnetc.exe|All files|*.*', 'Исполняемый файл|pabcnetc.exe|Все файлы|*.*']);
   TLoc.Register('dlg.browse_compiler.title',  ['컴파일러 선택',  'Select Compiler',  'Выбрать компилятор']);
-  TLoc.Register('dlg.save.filter',            ['XAML 파일|*.xaml|모든 파일|*.*', 'XAML files|*.xaml|All files|*.*', 'Файлы XAML|*.xaml|Все файлы|*.*']);
-  TLoc.Register('dlg.open.filter',            ['XAML 파일|*.xaml|모든 파일|*.*', 'XAML files|*.xaml|All files|*.*', 'Файлы XAML|*.xaml|Все файлы|*.*']);
+
+  //TLoc.Register('dlg.save.filter',            ['XAML 파일|*.xaml|모든 파일|*.*', 'XAML files|*.xaml|All files|*.*', 'Файлы XAML|*.xaml|Все файлы|*.*']);
+  //TLoc.Register('dlg.open.filter',            ['XAML 파일|*.xaml|모든 파일|*.*', 'XAML files|*.xaml|All files|*.*', 'Файлы XAML|*.xaml|Все файлы|*.*']);
+  TLoc.Register('dlg.open.filter',            ['PascalABC-WPF 솔루션|*.pwsln|PascalABC-WPF 프로젝트|*.pwproj|모든 파일|*.*',
+   'PascalABC-WPF Solution|*.pwsln|PascalABC-WPF Project|*.pwproj|All Files|*.*',
+   'Решение PascalABC-WPF|*.pwsln|Проект PascalABC-WPF|*.pwproj|Все файлы|*.*']);
+
+  
   // 빌드 출력 메시지
   TLoc.Register('msg.build.start',            ['빌드 시작: {0}',            'Build started: {0}',            'Сборка запущена: {0}']);
   TLoc.Register('msg.build.file_saved',       ['파일 저장: {0}',            'File saved: {0}',               'Файл сохранён: {0}']);

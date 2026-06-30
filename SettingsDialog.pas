@@ -255,6 +255,6 @@ begin
   FState.Dlg.Controls.Add(FState.BtnBar);
 
   FState.Dlg.ShowDialog(owner);
-end;
+end; 
 
 end.

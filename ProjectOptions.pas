@@ -279,6 +279,6 @@ begin
       'AutoCompleteOnStartup' : AutoCompleteOnStartup := boolean.Parse(val);
     end;
   end;
-end;
+end; 
 
 end.

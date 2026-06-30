@@ -124,6 +124,6 @@ begin
     else if raw = TLanguage.English.ToString() then Result := TLanguage.English
     else if raw = TLanguage.Ukrainian.ToString() then Result := TLanguage.Ukrainian;
   end;
-end;
+end; 
 
 end.

@@ -72,6 +72,10 @@ type
     WorkingDir       : string;
     UseEnvVars       : boolean;
     RunBeforeBuild   : boolean;
+    // ★ 추가: 일반 IDE 동작 설정 (옛 Settings 다이얼로그 "일반" 탭에서 합류)
+    PauseAfterConsole    : boolean;  // 콘솔 앱 실행 종료 후 "계속하려면 아무 키나..." 일시정지
+    SaveOnSuccess        : boolean;  // 빌드 성공 시 자동 저장
+    AutoCompleteOnStartup: boolean;  // IDE 시작 시 자동 완성(IntelliSense) 기본 활성화
 
     constructor Create;
     // ★ 추가
@@ -131,6 +135,10 @@ begin
   WorkingDir        := '';
   UseEnvVars        := false;
   RunBeforeBuild    := false;
+  // ★ 추가: 옛 AppSettings 기본값과 동일하게 맞춤
+  PauseAfterConsole     := true;
+  SaveOnSuccess         := false;
+  AutoCompleteOnStartup := true;
 end;
 
 // -----------------------------------------------------------------------
@@ -190,6 +198,10 @@ begin
     sw.WriteLine('WorkingDir='        + WorkingDir);
     sw.WriteLine('UseEnvVars='        + UseEnvVars.ToString());
     sw.WriteLine('RunBeforeBuild='    + RunBeforeBuild.ToString());
+    // ★ 추가
+    sw.WriteLine('PauseAfterConsole='     + PauseAfterConsole.ToString());
+    sw.WriteLine('SaveOnSuccess='         + SaveOnSuccess.ToString());
+    sw.WriteLine('AutoCompleteOnStartup=' + AutoCompleteOnStartup.ToString());
   finally
     sw.Close();
   end;
@@ -261,6 +273,10 @@ begin
       'WorkingDir'        : WorkingDir         := val;
       'UseEnvVars'        : UseEnvVars         := boolean.Parse(val);
       'RunBeforeBuild'    : RunBeforeBuild     := boolean.Parse(val);
+      // ★ 추가
+      'PauseAfterConsole'     : PauseAfterConsole     := boolean.Parse(val);
+      'SaveOnSuccess'         : SaveOnSuccess         := boolean.Parse(val);
+      'AutoCompleteOnStartup' : AutoCompleteOnStartup := boolean.Parse(val);
     end;
   end;
 end;

@@ -3,16 +3,21 @@
 // =============================================================================
 // AppSettings.pas — 앱 전역 설정 저장/로드 (프로젝트와 무관, 1회 설정 후 유지)
 //
-// TProjectOptions(.opts 파일, 프로젝트별)와는 별개로, 언어처럼 "이 PC에서
+// TProjectOptions(.pwproj.user, 프로젝트별)와는 별개로, 언어처럼 "이 PC에서
 // 이 IDE를 쓰는 사람"에 귀속되는 설정을 다룬다.
 //
 // 저장 위치: %AppData%\PascalABC-WPF-Designer\settings.ini
 // 형식: 단순 key=value (한 줄씩) — 외부 라이브러리 의존성 없음.
 //
+// ★ 변경 이력: 한때 "일반"(콘솔 일시정지/성공시 저장/시작시 자동완성) 및
+//   "에디터"(폰트/줄번호/하이라이트 등 13개) 설정도 여기서 관리했으나,
+//   이 IDE가 1인 개발자용 단일 사용자 도구라는 점을 고려해 모두
+//   Project Options(ProjectOptions.pas, .pwproj.user)로 되돌렸습니다.
+//   이제 AppSettings는 "언어"처럼 정말 프로젝트와 무관한 값만 다룹니다.
+//
 // 새 전역 설정 항목을 추가할 때:
-//   1) TAppSettingsData 에 필드 추가
-//   2) Load 의 케이스문에 키 매핑 추가
-//   3) Save 에 한 줄 추가
+//   1) Load 함수와 Save 프로시저를 LoadLanguage/SaveLanguage 패턴대로 추가
+//   2) LoadAll/SaveAll 의 범용 Dictionary를 그대로 재사용
 // =============================================================================
 interface
 
@@ -29,14 +34,6 @@ type
     // ── 언어 ─────────────────────────────────────────────────────────────
     class procedure SaveLanguage(lang: TLanguage);
     class function LoadLanguage: TLanguage;     // 저장된 값이 없으면 Korean 반환
-
-    // ── 일반 IDE 동작 설정 (첨부 이미지의 "설정 > 일반" 패널) ───────────────
-    class function LoadPauseAfterConsole: boolean;     // 기본값 true
-    class procedure SavePauseAfterConsole(value: boolean);
-    class function LoadSaveOnSuccess: boolean;          // 기본값 false
-    class procedure SaveSaveOnSuccess(value: boolean);
-    class function LoadAutoCompleteOnStartup: boolean;  // 기본값 true
-    class procedure SaveAutoCompleteOnStartup(value: boolean);
 
     // ── 범용 key=value (향후 다른 전역 설정 추가 시 재사용) ────────────────
     class function LoadAll: Dictionary<string, string>;
@@ -127,63 +124,6 @@ begin
     else if raw = TLanguage.English.ToString() then Result := TLanguage.English
     else if raw = TLanguage.Ukrainian.ToString() then Result := TLanguage.Ukrainian;
   end;
-end;
-
-// ── 일반 IDE 동작 설정 ───────────────────────────────────────────────────────
-// 패턴이 모두 동일: LoadAll → 키 있으면 파싱, 없으면 기본값 → SaveAll 시 다른 값 보존
-
-class function TAppSettings.LoadPauseAfterConsole: boolean;
-var values: Dictionary<string, string>;
-begin
-  values := LoadAll;
-  if values.ContainsKey('PauseAfterConsole') then
-    Result := values['PauseAfterConsole'] = 'true'
-  else
-    Result := true;   // 기본값: 이미지에서 체크되어 있던 상태와 동일
-end;
-
-class procedure TAppSettings.SavePauseAfterConsole(value: boolean);
-var values: Dictionary<string, string>;
-begin
-  values := LoadAll;
-  values['PauseAfterConsole'] := (if value then 'true' else 'false');
-  SaveAll(values);
-end;
-
-class function TAppSettings.LoadSaveOnSuccess: boolean;
-var values: Dictionary<string, string>;
-begin
-  values := LoadAll;
-  if values.ContainsKey('SaveOnSuccess') then
-    Result := values['SaveOnSuccess'] = 'true'
-  else
-    Result := false;  // 기본값: 이미지에서 체크 해제 상태와 동일
-end;
-
-class procedure TAppSettings.SaveSaveOnSuccess(value: boolean);
-var values: Dictionary<string, string>;
-begin
-  values := LoadAll;
-  values['SaveOnSuccess'] := (if value then 'true' else 'false');
-  SaveAll(values);
-end;
-
-class function TAppSettings.LoadAutoCompleteOnStartup: boolean;
-var values: Dictionary<string, string>;
-begin
-  values := LoadAll;
-  if values.ContainsKey('AutoCompleteOnStartup') then
-    Result := values['AutoCompleteOnStartup'] = 'true'
-  else
-    Result := true;   // 기본값: 이미지에서 체크되어 있던 상태와 동일
-end;
-
-class procedure TAppSettings.SaveAutoCompleteOnStartup(value: boolean);
-var values: Dictionary<string, string>;
-begin
-  values := LoadAll;
-  values['AutoCompleteOnStartup'] := (if value then 'true' else 'false');
-  SaveAll(values);
 end;
 
 end.

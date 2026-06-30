@@ -58,7 +58,7 @@ uses
 //               자동으로 바뀝니다.
 // =============================================================================
 const
-  APP_VERSION = '2.2.8';
+  APP_VERSION = '2.2.7';
   APP_TITLE   = 'PascalABC-WPF-Designer';
 
 // =============================================================================
@@ -195,7 +195,7 @@ type
     fDlgTxtFolder    : System.Windows.Forms.TextBox;
     fTxtCompilerPath : System.Windows.Forms.TextBox;
     fNavList         : System.Windows.Forms.ListBox;
-    fPanels          : array[0..6] of System.Windows.Forms.Panel;
+    fPanels          : array[0..6] of System.Windows.Forms.Panel; // ★ 복원: 에디터 탭 다시 추가로 6→7개
     fContentPanel    := new System.Windows.Forms.Panel();
     fTxtProjName, fTxtRootNs, fTxtClassName : System.Windows.Forms.TextBox;
     // 옵션 다이얼로그 컴파일러 경로 줄 (OnRowCompResize 에서 참조)
@@ -464,6 +464,8 @@ begin
   ICSharpCode.WpfDesign.Designer.BasicMetadata.Register();
 
   fOptions := new TProjectOptions();
+  // ★ 복원: 에디터 표시 설정은 다시 프로젝트별(fOptions/.pwproj.user)로 관리됩니다.
+  //   TProjectOptions.Create()가 이미 기본값을 채우므로 별도 동기화가 필요 없습니다.
 
   fProjectPath  := System.IO.Path.GetTempPath() + 'PascalWpfProject\';
   fSolutionPath := ''; // 아직 저장되지 않은 임시 프로젝트
@@ -574,6 +576,7 @@ begin
   end;
 end;
 
+// =============================================================================
 // =============================================================================
 // ApplyOptionsToEditors
 // =============================================================================
@@ -766,7 +769,7 @@ function MakeRow(lbl: System.Windows.Forms.Label;
 var
   dlg          : System.Windows.Forms.Form;
   splitDlg     : System.Windows.Forms.SplitContainer;
-  panels       : array[0..6] of System.Windows.Forms.Panel;
+  panels       : array[0..6] of System.Windows.Forms.Panel; // ★ 복원: 에디터 탭 다시 추가로 6→7개
 
   i            : integer;
 
@@ -780,17 +783,21 @@ var
   chkCopyXaml, chkEmbedAsm                           : System.Windows.Forms.CheckBox;
   chkOptimize, chkInline                              : System.Windows.Forms.CheckBox;
   cboTarget                                           : System.Windows.Forms.ComboBox;
-  spnIndent, spnTabSize, spnFontSize                  : System.Windows.Forms.NumericUpDown;
+  spnIndent                                           : System.Windows.Forms.NumericUpDown;
   cboBrace, cboCommentStyle                           : System.Windows.Forms.ComboBox;
   chkUseTabs, chkAutoBegin, chkAutoEnd, chkGenComments: System.Windows.Forms.CheckBox;
+  cboStartAct                                         : System.Windows.Forms.ComboBox;
+  txtExtProg, txtStartArgs                            : System.Windows.Forms.TextBox;
+  chkUseEnv, chkRunBefore                             : System.Windows.Forms.CheckBox;
+  // ★ 복원: "에디터" 탭 — Settings에서 다시 Project Options로 이동
   txtFont                                             : System.Windows.Forms.TextBox;
+  spnFontSize, spnTabSize                             : System.Windows.Forms.NumericUpDown;
   chkXamlLineNum, chkCodeLineNum                      : System.Windows.Forms.CheckBox;
   chkXamlHL, chkCodeHL                                : System.Windows.Forms.CheckBox;
   chkWordWrap, chkXamlFold, chkCodeFold               : System.Windows.Forms.CheckBox;
   chkShowWS, chkHlLine, chkAutoComp                   : System.Windows.Forms.CheckBox;
-  cboStartAct                                         : System.Windows.Forms.ComboBox;
-  txtExtProg, txtStartArgs                            : System.Windows.Forms.TextBox;
-  chkUseEnv, chkRunBefore                             : System.Windows.Forms.CheckBox;
+  // ★ 추가: "디버그/실행" 탭에 합류한 일반 IDE 동작 설정 3개 (옛 Settings "일반" 탭)
+  chkPauseConsole, chkSaveOnSuccess, chkAutoCompStart : System.Windows.Forms.CheckBox;
 
   // ── 페이지 빌더 ─────────────────────────────────────────────────────────────
 
@@ -943,6 +950,8 @@ var
     p.Controls.Add(MakeHint(TLoc.S('dlg.projectoptions.codestyle.hint'))); //'자동 코드 생성 시 적용되는 스타일을 설정합니다.'
   end;
 
+  // ★ 복원: "에디터" 탭 — Settings 다이얼로그로 옮겼다가 다시 Project Options로 되돌림.
+  //   1인 개발 환경에서는 IDE 전역/프로젝트별 구분이 실익이 없다고 판단했습니다.
   procedure BuildPageEditor(p: System.Windows.Forms.Panel);
   var
     lineNumPanel : System.Windows.Forms.Panel;
@@ -971,10 +980,10 @@ var
     lineNumLabel.Top       := 3; lineNumLabel.Left := 0;
     lineNumLabel.Anchor    := System.Windows.Forms.AnchorStyles.Left or
                               System.Windows.Forms.AnchorStyles.Top;
-    chkXamlLineNum.Top     := 3; chkXamlLineNum.Left := 165;//175;
+    chkXamlLineNum.Top     := 3; chkXamlLineNum.Left := 165;
     chkXamlLineNum.Anchor  := System.Windows.Forms.AnchorStyles.Left or
                               System.Windows.Forms.AnchorStyles.Top;
-    chkCodeLineNum.Top     := 3; chkCodeLineNum.Left := 165;//290;
+    chkCodeLineNum.Top     := 3; chkCodeLineNum.Left := 165;
     chkCodeLineNum.Anchor  := System.Windows.Forms.AnchorStyles.Left or
                               System.Windows.Forms.AnchorStyles.Top;
     lineNumPanel.Controls.Add(lineNumLabel);
@@ -1010,7 +1019,14 @@ var
     txtWdCtl      := MakeTextBox(fOptions.WorkingDir,      280);
     chkUseEnv     := MakeCheck(TLoc.S('dlg.projectoptions.debug.use_env'),        fOptions.UseEnvVars); //'현재 환경 변수 사용'
     chkRunBefore  := MakeCheck(TLoc.S('dlg.projectoptions.debug.run_before'), fOptions.RunBeforeBuild); //'빌드 전 프로젝트 저장 확인'
+    // ★ 추가: 옛 Settings 다이얼로그 "일반" 탭에서 합류한 항목들
+    chkPauseConsole  := MakeCheck(TLoc.S('dlg.projectoptions.debug.pause_console'),  fOptions.PauseAfterConsole); //'콘솔 앱 종료 후 일시정지'
+    chkSaveOnSuccess := MakeCheck(TLoc.S('dlg.projectoptions.debug.save_on_success'), fOptions.SaveOnSuccess); //'빌드 성공 시 자동 저장'
+    chkAutoCompStart := MakeCheck(TLoc.S('dlg.projectoptions.debug.auto_comp_start'), fOptions.AutoCompleteOnStartup); //'시작 시 자동 완성 활성화'
 
+    p.Controls.Add(MakeCkPanel(chkAutoCompStart));
+    p.Controls.Add(MakeCkPanel(chkSaveOnSuccess));
+    p.Controls.Add(MakeCkPanel(chkPauseConsole));
     p.Controls.Add(MakeCkPanel(chkRunBefore));
     p.Controls.Add(MakeCkPanel(chkUseEnv));
     p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.debug.work_dir')), txtWdCtl)); //'작업 디렉터리'
@@ -1052,6 +1068,7 @@ var
     fOptions.AutoInsertEnd    := chkAutoEnd.Checked;
     fOptions.GenerateComments := chkGenComments.Checked;
     fOptions.CommentStyle     := cboCommentStyle.Text;
+    // ★ 복원: 에디터 설정 — Settings에서 다시 Project Options로 이동
     fOptions.FontName         := txtFont.Text.Trim();
     fOptions.FontSize         := System.Convert.ToInt32(spnFontSize.Value);
     fOptions.XamlShowLineNum  := chkXamlLineNum.Checked;
@@ -1070,6 +1087,10 @@ var
     fOptions.StartArgs        := txtStartArgs.Text.Trim();
     fOptions.UseEnvVars       := chkUseEnv.Checked;
     fOptions.RunBeforeBuild   := chkRunBefore.Checked;
+    // ★ 추가: 옛 Settings 다이얼로그 "일반" 탭에서 합류한 항목들
+    fOptions.PauseAfterConsole     := chkPauseConsole.Checked;
+    fOptions.SaveOnSuccess          := chkSaveOnSuccess.Checked;
+    fOptions.AutoCompleteOnStartup  := chkAutoCompStart.Checked;
     fProjectType := fOptions.ProjectType;
     ApplyOptionsToEditors();
   end;
@@ -1100,6 +1121,7 @@ begin
   fNavList.Items.Add(TLoc.S('dlg.projectoptions.nav.output')); //'  📦  출력 설정'
   fNavList.Items.Add(TLoc.S('dlg.projectoptions.nav.optimize')); //'  ⚡  최적화'
   fNavList.Items.Add(TLoc.S('dlg.projectoptions.nav.codestyle')); //'  🎨  코드 스타일'
+  // ★ 복원: "에디터" 탭 — Settings 다이얼로그에서 다시 Project Options로 되돌림
   fNavList.Items.Add(TLoc.S('dlg.projectoptions.nav.editor')); //'  📝  에디터'
   fNavList.Items.Add(TLoc.S('dlg.projectoptions.nav.debug')); //'  ▶  디버그/실행'
   fNavList.SelectedIndex := 0;
@@ -1131,6 +1153,7 @@ begin
   chkOptimize := nil; chkInline := nil; cboTarget := nil;
   spnIndent := nil; cboBrace := nil; cboCommentStyle := nil;
   chkUseTabs := nil; chkAutoBegin := nil; chkAutoEnd := nil; chkGenComments := nil;
+  // ★ 복원: 에디터 탭 컨트롤 nil 초기화
   txtFont := nil; spnFontSize := nil; spnTabSize := nil;
   chkXamlLineNum := nil; chkCodeLineNum := nil;
   chkXamlHL := nil; chkCodeHL := nil;
@@ -1138,14 +1161,16 @@ begin
   chkShowWS := nil; chkHlLine := nil; chkAutoComp := nil;
   cboStartAct := nil; txtExtProg := nil; txtStartArgs := nil;
   chkUseEnv := nil; chkRunBefore := nil;
+  // ★ 추가: 일반 설정 3개 컨트롤 nil 초기화
+  chkPauseConsole := nil; chkSaveOnSuccess := nil; chkAutoCompStart := nil;
 
   BuildPageInfo(panels[0]);
   BuildPageCompiler(panels[1]);
   BuildPageOutput(panels[2]);
   BuildPageOptimize(panels[3]);
   BuildPageCodeStyle(panels[4]);
-  BuildPageEditor(panels[5]);
-  BuildPageDebug(panels[6]);
+  BuildPageEditor(panels[5]); // ★ 복원
+  BuildPageDebug(panels[6]);  // ★ 인덱스 5→6
 
   i := 0;
   while i <= 6 do
@@ -1470,6 +1495,7 @@ begin
   fProjFileName := projName + ProjectFile.PROJECT_FILE_EXT;
 
   fOptions := new TProjectOptions(); // ★ 추가: 새 프로젝트는 사용자 옵션도 기본값으로 초기화
+  // ★ 복원: 에디터 표시 설정은 다시 프로젝트별로 관리되므로 별도 동기화 불필요
   fOptions.ProjectName   := projName;
   fOptions.RootNamespace := projName;
   fOptions.ClassName     := projName;
@@ -2159,6 +2185,8 @@ begin
         AppendOutput(TLoc.F('msg.error.load_options', ex.Message), true);
     end;
   end;
+  // ★ 복원: 에디터 표시 값(폰트/줄번호 등)은 다시 .pwproj.user에 저장된 값을
+  //   그대로 신뢰합니다 (프로젝트별 설정으로 되돌림).
   fOptions.ProjectPath   := fProjectPath;
   fOptions.ProjectType   := fProjectType;
   fOptions.ProjectName   := pf.ProjectName;
@@ -4984,6 +5012,9 @@ end;
 
 procedure Form1.OnSettingsLanguageChanged;
 begin
+  // ★ 복원: Settings 다이얼로그는 다시 "언어 전환" 전용으로 단순화되었습니다.
+  //   에디터 설정은 Project Options에서 직접 관리하므로 여기서는 동기화하지 않습니다.
+
   // 폼 제목 — ★ 수정: 솔루션이 저장되어 있으면 .pwsln 경로를, 아니면 프로젝트 폴더를 표시
   if fSolutionPath <> '' then
     Self.Text := TLoc.S('title.main_app') + ' — ' + fSolutionPath

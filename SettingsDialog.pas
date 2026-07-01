@@ -100,15 +100,36 @@ end;
 
 // ── 헬퍼: 라벨 + 컨트롤 한 행 ───────────────────────────────────────────────
 class function TSettingsDialog.MakeRow(lbl: System.Windows.Forms.Label;
-                                       ctl: System.Windows.Forms.Control): System.Windows.Forms.Panel;
+  ctl: System.Windows.Forms.Control): System.Windows.Forms.Panel;
+var
+  table: System.Windows.Forms.TableLayoutPanel;
 begin
-  Result := new System.Windows.Forms.Panel();
+  Result        := new System.Windows.Forms.Panel();
   Result.Height := 34;
   Result.Dock   := System.Windows.Forms.DockStyle.Top;
-  lbl.Top  := 6;  lbl.Left := 16;
-  ctl.Top  := 3;  ctl.Left := 176;
-  Result.Controls.Add(lbl);
-  Result.Controls.Add(ctl);
+  Result.Padding := new System.Windows.Forms.Padding(16, 0, 12, 0); // 좌우 패딩
+
+  table := new System.Windows.Forms.TableLayoutPanel();
+  table.Dock := System.Windows.Forms.DockStyle.Fill;
+  table.ColumnCount := 2;
+  table.RowCount := 1;
+  
+  // 컬럼0: 라벨 160px 고정, 컬럼1: 컨트롤 100% 채움
+  table.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(
+    System.Windows.Forms.SizeType.Absolute, 160));
+  table.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(
+    System.Windows.Forms.SizeType.Percent, 100));
+  
+  lbl.Margin := new System.Windows.Forms.Padding(0, 6, 5, 0);
+  lbl.Anchor := System.Windows.Forms.AnchorStyles.Left or
+                System.Windows.Forms.AnchorStyles.Top;
+  
+  ctl.Margin := new System.Windows.Forms.Padding(5, 3, 0, 3);
+  ctl.Dock   := System.Windows.Forms.DockStyle.Fill; // ★ 남은 공간 정확히 채움
+  
+  table.Controls.Add(lbl, 0, 0);
+  table.Controls.Add(ctl, 1, 0);
+  Result.Controls.Add(table);
 end;
 
 // ── 이벤트: 언어 드롭다운 변경 ───────────────────────────────────────────────
@@ -173,7 +194,7 @@ begin
 
   FState.CboLanguage := new System.Windows.Forms.ComboBox();
   FState.CboLanguage.DropDownStyle := System.Windows.Forms.ComboBoxStyle.DropDownList;
-  FState.CboLanguage.Width := 220;
+  //FState.CboLanguage.Width := 220;
   FState.CboLanguage.Font  := new System.Drawing.Font('Segoe UI', 9);
   foreach lang in TLoc.AllLanguages do
     FState.CboLanguage.Items.Add(TLoc.LanguageName(lang));

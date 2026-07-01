@@ -182,6 +182,9 @@ begin
   TLoc.Register('dlg.projectoptions.info.hint',           ['프로젝트의 기본 정보를 설정합니다.', 'Configure basic project information.', 'Настройка основных сведений о проекте.']);
   TLoc.Register('dlg.projectoptions.info.type_app',       ['WPF 애플리케이션 (.exe)',      'WPF Application (.exe)',        'WPF приложение (.exe)']);
   TLoc.Register('dlg.projectoptions.info.type_lib',       ['WPF 컨트롤 라이브러리 (.dll)', 'WPF Control Library (.dll)',    'Библиотека элементов WPF (.dll)']);
+  TLoc.Register('dlg.browse_project.folder_description',  ['프로젝트가 저장될 폴더를 선택하세요.',
+                                                           'Select the folder where the project will be saved.',
+                                                           'Выберите папку для сохранения проекта.']);
   // 컴파일러 페이지
   TLoc.Register('dlg.projectoptions.compiler.header',     ['컴파일러 설정',                'Compiler Settings',             'Настройки компилятора']);
   TLoc.Register('dlg.projectoptions.compiler.path',       ['컴파일러 경로',                'Compiler Path',                 'Путь к компилятору']);

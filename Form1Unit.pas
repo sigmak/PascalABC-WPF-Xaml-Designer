@@ -58,7 +58,7 @@ uses
 //               자동으로 바뀝니다.
 // =============================================================================
 const
-  APP_VERSION = '2.2.10';
+  APP_VERSION = '2.2.11';
   APP_TITLE   = 'PascalABC-WPF-Designer';
 
 // =============================================================================
@@ -198,6 +198,22 @@ type
     fPanels          : array[0..6] of System.Windows.Forms.Panel; // ★ 복원: 에디터 탭 다시 추가로 6→7개
     fContentPanel    := new System.Windows.Forms.Panel();
     fTxtProjName, fTxtRootNs, fTxtClassName : System.Windows.Forms.TextBox;
+    // 추가
+    fDlgRowProjPath      : System.Windows.Forms.Panel;
+    fDlgBtnBrowseProj    : System.Windows.Forms.Button;
+    fDlgTxtProjPath      : System.Windows.Forms.TextBox; // BuildPageInfo용    
+
+
+    // 추가
+    fDlgRowOutDir        : System.Windows.Forms.Panel;
+    fDlgBtnBrowseOutDir  : System.Windows.Forms.Button;
+    fDlgTxtOutDir        : System.Windows.Forms.TextBox;
+    
+    fDlgRowWorkDir       : System.Windows.Forms.Panel;
+    fDlgBtnBrowseWorkDir : System.Windows.Forms.Button;
+    fDlgTxtWorkDir       : System.Windows.Forms.TextBox;    
+
+
     // 옵션 다이얼로그 컴파일러 경로 줄 (OnRowCompResize 에서 참조)
     fDlgRowComp      : System.Windows.Forms.Panel;
     fDlgBtnBrowseComp: System.Windows.Forms.Button;
@@ -366,6 +382,9 @@ type
     procedure OnProjectOptions(sender: System.Object; e: System.EventArgs);
     procedure ShowProjectOptionsDialog;
     procedure ApplyOptionsToEditors;
+    
+    procedure OnRowProjPathResize(sender: System.Object; e: System.EventArgs);
+    procedure OnBrowseProjPathClick(sender: System.Object; e: System.EventArgs);
 
     // ── 옵션 다이얼로그 콜백 ────────────────────────────────────────────────
     procedure OnNavListSelectedIndexChanged(sender: System.Object; e: System.EventArgs);
@@ -682,9 +701,9 @@ procedure Form1.ShowProjectOptionsDialog;
   begin
     Result        := new System.Windows.Forms.TextBox();
     Result.Text   := val;
-    Result.Width  := w;
     Result.Height := 23;
     Result.Font   := new System.Drawing.Font('Segoe UI', 9);
+    // Width, Anchor, Dock 전부 삭제
   end;
 
   function MakeCheck(text: string; chk: boolean): System.Windows.Forms.CheckBox;
@@ -702,8 +721,8 @@ procedure Form1.ShowProjectOptionsDialog;
   begin
     Result               := new System.Windows.Forms.ComboBox();
     Result.DropDownStyle := System.Windows.Forms.ComboBoxStyle.DropDownList;
-    Result.Width         := w;
     Result.Font          := new System.Drawing.Font('Segoe UI', 9);
+    // Width, Anchor, Dock 전부 삭제
     foreach item in items do
     begin
       Result.Items.Add(item);
@@ -718,37 +737,41 @@ procedure Form1.ShowProjectOptionsDialog;
     Result.Minimum := mn;
     Result.Maximum := mx;
     Result.Value   := val;
-    Result.Width   := w;
     Result.Font    := new System.Drawing.Font('Segoe UI', 9);
+    // Result.Width := w; ← 삭제
   end;
 
-function MakeRow(lbl: System.Windows.Forms.Label;
-                 ctl: System.Windows.Forms.Control): System.Windows.Forms.Panel;
+  function MakeRow(lbl: System.Windows.Forms.Label;
+                   ctl: System.Windows.Forms.Control): System.Windows.Forms.Panel;
+  var
+    table: System.Windows.Forms.TableLayoutPanel;
   begin
     Result        := new System.Windows.Forms.Panel();
     Result.Height := 34;
     Result.Dock   := System.Windows.Forms.DockStyle.Top;
-
-    lbl.Top := 6;
-    lbl.Left := 0;
-
+    Result.Padding := new System.Windows.Forms.Padding(0, 0, 12, 0);
+  
+    table := new System.Windows.Forms.TableLayoutPanel();
+    table.Dock := System.Windows.Forms.DockStyle.Fill;
+    table.ColumnCount := 2;
+    table.RowCount := 1;
+    
+    // 컬럼0: 라벨 고정 160px, 컬럼1: 컨트롤 100% 채움
+    table.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(
+      System.Windows.Forms.SizeType.Absolute, 160));
+    table.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(
+      System.Windows.Forms.SizeType.Percent, 100));
+    
+    lbl.Margin := new System.Windows.Forms.Padding(0, 6, 5, 0);
     lbl.Anchor := System.Windows.Forms.AnchorStyles.Left or
                   System.Windows.Forms.AnchorStyles.Top;
-
-    ctl.Top := 3;
-    ctl.Left := 165;
-
-    if (ctl is System.Windows.Forms.TextBox) then
-      ctl.Anchor := System.Windows.Forms.AnchorStyles.Left or
-                    System.Windows.Forms.AnchorStyles.Top or
-                    System.Windows.Forms.AnchorStyles.Right
-    else
-      ctl.Anchor := System.Windows.Forms.AnchorStyles.Left or
-                    System.Windows.Forms.AnchorStyles.Top;
-
-    Result.Controls.Add(lbl);
-    Result.Controls.Add(ctl);
-    Result.MinimumSize := new System.Drawing.Size(0, Result.Height);
+    
+    ctl.Margin := new System.Windows.Forms.Padding(5, 3, 0, 3);
+    ctl.Dock   := System.Windows.Forms.DockStyle.Fill; // ★ 핵심: 남은 공간 전부 채움
+    
+    table.Controls.Add(lbl, 0, 0);
+    table.Controls.Add(ctl, 1, 0);
+    Result.Controls.Add(table);
   end;
 
   function MakeCkPanel(cb: System.Windows.Forms.CheckBox): System.Windows.Forms.Panel;
@@ -774,7 +797,7 @@ var
   i            : integer;
 
   // 각 페이지 컨트롤 참조
-  txtProjName, txtRootNs, txtClassName, txtProjPath : System.Windows.Forms.TextBox;
+  txtProjName, txtRootNs, txtClassName               : System.Windows.Forms.TextBox;
   cboProjType                                        : System.Windows.Forms.ComboBox;
   txtAdditArgs                                       : System.Windows.Forms.TextBox;
   chkNoConsole, chkDebug, chkWarnErr, chkAutoClean   : System.Windows.Forms.CheckBox;
@@ -800,29 +823,66 @@ var
   chkPauseConsole, chkSaveOnSuccess, chkAutoCompStart : System.Windows.Forms.CheckBox;
 
   // ── 페이지 빌더 ─────────────────────────────────────────────────────────────
-
   procedure BuildPageInfo(p: System.Windows.Forms.Panel);
+  var
+    lbl: System.Windows.Forms.Label;
   begin
-    p.Controls.Add(MakeSectionLabel(TLoc.S('dlg.projectoptions.info.header'))); //'프로젝트 정보'
-    txtProjName := MakeTextBox(fOptions.ProjectName, 280);
-    cboProjType := MakeCombo(
-      [TLoc.S('dlg.projectoptions.info.type_app'), TLoc.S('dlg.projectoptions.info.type_lib')], //['WPF 애플리케이션 (.exe)', 'WPF 컨트롤 라이브러리 (.dll)'],
-      (if fOptions.ProjectType = ptWpfApp then TLoc.S('dlg.projectoptions.info.type_app') //'WPF 애플리케이션 (.exe)'
-       else TLoc.S('dlg.projectoptions.info.type_lib')), 280); //'WPF 컨트롤 라이브러리 (.dll)' 
-    txtRootNs   := MakeTextBox(fOptions.RootNamespace, 280); 
-    txtClassName := MakeTextBox(fOptions.ClassName, 280); 
-    txtProjPath  := MakeTextBox(fProjectPath, 380); 
-
-    fTxtProjName := txtProjName;
-    fTxtRootNs   := txtRootNs;
+    p.Controls.Add(MakeSectionLabel(TLoc.S('dlg.projectoptions.info.header')));
+  
+    txtProjName  := MakeTextBox(fOptions.ProjectName, 0); 
+    cboProjType  := MakeCombo(
+      [TLoc.S('dlg.projectoptions.info.type_app'), TLoc.S('dlg.projectoptions.info.type_lib')],
+      (if fOptions.ProjectType = ptWpfApp then TLoc.S('dlg.projectoptions.info.type_app')
+       else TLoc.S('dlg.projectoptions.info.type_lib')), 0); 
+    txtRootNs    := MakeTextBox(fOptions.RootNamespace, 0); 
+    txtClassName := MakeTextBox(fOptions.ClassName, 0); 
+  
+    fTxtProjName  := txtProjName;
+    fTxtRootNs    := txtRootNs;
     fTxtClassName := txtClassName;
-
-    p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.info.path')), txtProjPath)); //'프로젝트 경로'
-    p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.info.classname')), txtClassName)); //'클래스 이름'
-    p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.info.rootns')), txtRootNs)); //'루트 네임스페이스'
-    p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.info.type')), cboProjType)); //'프로젝트 형식'
-    p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.info.name')), txtProjName)); //'프로젝트 이름'
-    p.Controls.Add(MakeHint(TLoc.S('dlg.projectoptions.info.hint'))); //'프로젝트의 기본 정보를 설정합니다.'
+  
+    // ★ 프로젝트 경로 + 찾아보기 버튼 줄
+    fDlgTxtProjPath  := MakeTextBox(fProjectPath, 0);
+    fDlgTxtProjPath.Font := new System.Drawing.Font('Segoe UI', 9);
+  
+    fDlgBtnBrowseProj        := new System.Windows.Forms.Button();
+    fDlgBtnBrowseProj.Text   := '...';
+    fDlgBtnBrowseProj.Width  := 28;
+    fDlgBtnBrowseProj.Height := 23;
+    fDlgBtnBrowseProj.Top    := 3;
+    fDlgBtnBrowseProj.Font   := new System.Drawing.Font('Segoe UI', 9);
+    fDlgBtnBrowseProj.Click  += OnBrowseProjPathClick; // 새 이벤트
+    fDlgBtnBrowseProj.Anchor := System.Windows.Forms.AnchorStyles.Top or
+                                System.Windows.Forms.AnchorStyles.Right;
+  
+    fDlgRowProjPath        := new System.Windows.Forms.Panel();
+    fDlgRowProjPath.Height := 28;
+    fDlgRowProjPath.Dock   := System.Windows.Forms.DockStyle.Top;
+    
+    lbl        := MakeLabel(TLoc.S('dlg.projectoptions.info.path'));
+    lbl.Top    := 3; lbl.Left := 0;
+    lbl.Anchor := System.Windows.Forms.AnchorStyles.Left or
+                  System.Windows.Forms.AnchorStyles.Top;
+                  
+    fDlgTxtProjPath.Top    := 3; fDlgTxtProjPath.Left := 165;
+    fDlgTxtProjPath.Anchor := System.Windows.Forms.AnchorStyles.Left or
+                              System.Windows.Forms.AnchorStyles.Top or
+                              System.Windows.Forms.AnchorStyles.Right;
+                              
+    fDlgRowProjPath.Controls.Add(lbl);
+    fDlgRowProjPath.Controls.Add(fDlgTxtProjPath);
+    fDlgRowProjPath.Controls.Add(fDlgBtnBrowseProj);
+  
+    // 리사이즈 시 텍스트박스가 버튼 앞까지 늘어나게
+    fDlgRowProjPath.Resize += OnRowProjPathResize;
+    fDlgBtnBrowseProj.Left := fDlgRowProjPath.Width - fDlgBtnBrowseProj.Width - 4;
+  
+    p.Controls.Add(fDlgRowProjPath); // MakeRow 대신 직접 만든 Panel 추가
+    p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.info.classname')), txtClassName));
+    p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.info.rootns')), txtRootNs));
+    p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.info.type')), cboProjType));
+    p.Controls.Add(MakeRow(MakeLabel(TLoc.S('dlg.projectoptions.info.name')), txtProjName));
+    p.Controls.Add(MakeHint(TLoc.S('dlg.projectoptions.info.hint')));
   end;
 
   procedure BuildPageCompiler(p: System.Windows.Forms.Panel);
@@ -855,7 +915,8 @@ var
                       System.Windows.Forms.AnchorStyles.Top;
     fDlgTxtCompPath.Top    := 3; fDlgTxtCompPath.Left := 165;//175;
     fDlgTxtCompPath.Anchor := System.Windows.Forms.AnchorStyles.Left or
-                              System.Windows.Forms.AnchorStyles.Top;
+                              System.Windows.Forms.AnchorStyles.Top or
+                              System.Windows.Forms.AnchorStyles.Right; // ★ 추가
     fDlgRowComp.Controls.Add(lbl);
     fDlgRowComp.Controls.Add(fDlgTxtCompPath);
     fDlgRowComp.Controls.Add(fDlgBtnBrowseComp);
@@ -863,7 +924,7 @@ var
     // 패널이 리사이즈될 때 텍스트박스가 찾아보기(...) 버튼 바로 앞까지 늘어나도록 처리
     fDlgRowComp.Resize += OnRowCompResize;
     fDlgBtnBrowseComp.Left := fDlgRowComp.Width - fDlgBtnBrowseComp.Width - 4;
-    fDlgTxtCompPath.Width := fDlgBtnBrowseComp.Left - fDlgTxtCompPath.Left - 6;
+    //fDlgTxtCompPath.Width := fDlgBtnBrowseComp.Left - fDlgTxtCompPath.Left - 6; // OnRowCompResize에서 계산하므로 그대로 둠
 
     txtAdditArgs := MakeTextBox(fOptions.AdditionalArgs, 320);
     chkNoConsole := MakeCheck(TLoc.S('dlg.projectoptions.compiler.no_console'), fOptions.NoConsole); //'콘솔 창 숨기기 (/noconsole)'
@@ -1044,6 +1105,8 @@ var
     fOptions.ClassName        := txtClassName.Text.Trim();
     fOptions.ProjectType      := (if cboProjType.SelectedIndex = 1
                                   then ptWpfControlLibrary else ptWpfApp);
+    fOptions.ProjectPath      := fDlgTxtProjPath.Text.Trim(); // txtProjPath 대신 fDlgTxtProjPath                                  
+    
     fOptions.CompilerPath     := fDlgTxtCompPath.Text.Trim();
     fOptions.AdditionalArgs   := txtAdditArgs.Text.Trim();
     fOptions.NoConsole        := chkNoConsole.Checked;
@@ -1298,6 +1361,24 @@ begin
 
   fProjectType := fOptions.ProjectType;
   ApplyOptionsToEditors();
+end;
+
+// 옵션 다이얼로그 내부 레이아웃 핸들러 섹션에 추가
+procedure Form1.OnRowProjPathResize(sender: System.Object; e: System.EventArgs);
+begin
+  fDlgBtnBrowseProj.Left := fDlgRowProjPath.ClientSize.Width - fDlgBtnBrowseProj.Width - 4;
+  fDlgTxtProjPath.Width  := fDlgBtnBrowseProj.Left - fDlgTxtProjPath.Left - 6;
+end;
+
+procedure Form1.OnBrowseProjPathClick(sender: System.Object; e: System.EventArgs);
+begin
+  var fd := new System.Windows.Forms.FolderBrowserDialog();
+  fd.Description := TLoc.S('dlg.browse_project.folder_description'); //'프로젝트 폴더 선택'
+  if System.IO.Directory.Exists(fDlgTxtProjPath.Text) then
+    fd.SelectedPath := fDlgTxtProjPath.Text;
+    
+  if fd.ShowDialog() = System.Windows.Forms.DialogResult.OK then
+    fDlgTxtProjPath.Text := fd.SelectedPath;
 end;
 
 // =============================================================================

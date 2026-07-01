@@ -7,6 +7,15 @@ PascalABC.net 개발툴을 활용한 pascal wpf xaml Designer
 4. DockPanelSuite             : https://www.nuget.org/api/v2/package/DockPanelSuite/3.1.0
 5. DockPanelSuite.ThemeVS2015 : https://www.nuget.org/packages/DockPanelSuite.ThemeVS2015/
 
+
+[Ver 2.2.11]
+* Project Options 창과 Settings 창의 우측 컨트롤 width 조정
+* Project Options 창에서 폴더 선택 버튼 추가 (아직 몇개 더 필요함)
+  
+<img src='https://github.com/sigmak/PascalABC-WPF-Xaml-Designer/blob/main/screenshot/ver-2-2-11.png' />
+<img src='https://github.com/sigmak/PascalABC-WPF-Xaml-Designer/blob/main/screenshot/ver-2-2-11B.png' />
+<img src='https://github.com/sigmak/PascalABC-WPF-Xaml-Designer/blob/main/screenshot/ver-2-2-11C.png' />
+
 [Ver 2.2.10]
 * 소스코드 리펙토링 정리
 

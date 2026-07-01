@@ -27,7 +27,7 @@ implementation
 
 class procedure TStrings_Common.RegisterAll;
 begin
-  // 순서: Korean, English, Ukrainian  (LocalizationCore.AllLanguages 순서와 일치)
+  // 순서: Korean, English, Russian  (LocalizationCore.AllLanguages 순서와 일치)
 
   // ── 파일 메뉴 ────────────────────────────────────────────────────────────
   TLoc.Register('menu.file',          ['파일(&F)',            'File(&F)',            'Файл(&F)']);
@@ -255,8 +255,6 @@ begin
   TLoc.Register('dlg.browse_compiler.filter', ['실행 파일|pabcnetc.exe|모든 파일|*.*', 'Executable|pabcnetc.exe|All files|*.*', 'Исполняемый файл|pabcnetc.exe|Все файлы|*.*']);
   TLoc.Register('dlg.browse_compiler.title',  ['컴파일러 선택',  'Select Compiler',  'Выбрать компилятор']);
 
-  //TLoc.Register('dlg.save.filter',            ['XAML 파일|*.xaml|모든 파일|*.*', 'XAML files|*.xaml|All files|*.*', 'Файлы XAML|*.xaml|Все файлы|*.*']);
-  //TLoc.Register('dlg.open.filter',            ['XAML 파일|*.xaml|모든 파일|*.*', 'XAML files|*.xaml|All files|*.*', 'Файлы XAML|*.xaml|Все файлы|*.*']);
   TLoc.Register('dlg.open.filter',            ['PascalABC-WPF 솔루션|*.pwsln|PascalABC-WPF 프로젝트|*.pwproj|모든 파일|*.*',
    'PascalABC-WPF Solution|*.pwsln|PascalABC-WPF Project|*.pwproj|All Files|*.*',
    'Решение PascalABC-WPF|*.pwsln|Проект PascalABC-WPF|*.pwproj|Все файлы|*.*']);

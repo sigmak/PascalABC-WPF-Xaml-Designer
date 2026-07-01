@@ -122,7 +122,7 @@ begin
     raw := values['Language'];
     if raw = TLanguage.Korean.ToString() then Result := TLanguage.Korean
     else if raw = TLanguage.English.ToString() then Result := TLanguage.English
-    else if raw = TLanguage.Ukrainian.ToString() then Result := TLanguage.Ukrainian;
+    else if raw = TLanguage.Russian.ToString() then Result := TLanguage.Russian;
   end;
 end; 
 

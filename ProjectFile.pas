@@ -34,6 +34,10 @@ const
   PROJECT_FILE_VERSION  = '1';
   SOLUTION_FILE_VERSION = '1';
 
+// TProjectFile.SaveToFile / TSolutionFile.SaveToFile 공통 — 들여쓰기·UTF8 설정으로
+// XmlDocument를 지정 경로에 저장한다.
+procedure SaveXmlDocument(doc: System.Xml.XmlDocument; path: string);
+
 type
   // ───────────────────────────────────────────────────────────────────────
   // TProjectFile — 단일 프로젝트(.pwproj)의 내용
@@ -91,16 +95,7 @@ type
       AddElem(doc, root, 'XamlFile', XamlFileName);
       AddElem(doc, root, 'PasFile',  PasFileName);
 
-      var settings := new System.Xml.XmlWriterSettings();
-      settings.Indent := true;
-      settings.IndentChars := '  ';
-      settings.Encoding := System.Text.Encoding.UTF8;
-      var writer := System.Xml.XmlWriter.Create(path, settings);
-      try
-        doc.Save(writer);
-      finally
-        writer.Close();
-      end;
+      SaveXmlDocument(doc, path);
     end;
 
     // root 엘리먼트의 자식 노드 텍스트를 읽는 헬퍼 (없으면 fallback 반환).
@@ -173,16 +168,7 @@ type
         projsElem.AppendChild(pElem);
       end;
 
-      var settings := new System.Xml.XmlWriterSettings();
-      settings.Indent := true;
-      settings.IndentChars := '  ';
-      settings.Encoding := System.Text.Encoding.UTF8;
-      var writer := System.Xml.XmlWriter.Create(path, settings);
-      try
-        doc.Save(writer);
-      finally
-        writer.Close();
-      end;
+      SaveXmlDocument(doc, path);
     end;
 
     procedure LoadFromFile(path: string);
@@ -233,6 +219,23 @@ type
 function MakeRelativePath(fromFolder, toPath: string): string;
 
 implementation
+
+procedure SaveXmlDocument(doc: System.Xml.XmlDocument; path: string);
+var
+  settings: System.Xml.XmlWriterSettings;
+  writer  : System.Xml.XmlWriter;
+begin
+  settings := new System.Xml.XmlWriterSettings();
+  settings.Indent := true;
+  settings.IndentChars := '  ';
+  settings.Encoding := System.Text.Encoding.UTF8;
+  writer := System.Xml.XmlWriter.Create(path, settings);
+  try
+    doc.Save(writer);
+  finally
+    writer.Close();
+  end;
+end;
 
 function MakeRelativePath(fromFolder, toPath: string): string;
 var

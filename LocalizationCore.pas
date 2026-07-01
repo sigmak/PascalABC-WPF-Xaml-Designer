@@ -11,7 +11,7 @@ uses
   System.Windows.Forms;
 
 type
-  TLanguage = (Korean, English, Ukrainian);
+  TLanguage = (Korean, English, Russian);
 
   TBoundKind = (BoundMenuItem, BoundLabelControl, BoundButtonControl,
                 BoundFormTitle, BoundColumnHeader, BoundToolTip);
@@ -84,7 +84,7 @@ begin
   Result := new TLanguage[3];
   Result[0] := TLanguage.Korean;
   Result[1] := TLanguage.English;
-  Result[2] := TLanguage.Ukrainian;
+  Result[2] := TLanguage.Russian;
 end;
 
 class function TLoc.LanguageName(lang: TLanguage): string;
@@ -92,7 +92,7 @@ begin
   case lang of
     TLanguage.Korean    : Result := '한국어';
     TLanguage.English   : Result := 'English';
-    TLanguage.Ukrainian : Result := 'Українська';
+    TLanguage.Russian   : Result := 'Русский';
   else
     Result := lang.ToString();
   end;
@@ -102,7 +102,7 @@ class function TLoc.LanguageFromName(name: string): TLanguage;
 begin
   if name = '한국어' then Result := TLanguage.Korean
   else if name = 'English' then Result := TLanguage.English
-  else if name = 'Українська' then Result := TLanguage.Ukrainian
+  else if name = 'Русский' then Result := TLanguage.Russian
   else Result := TLanguage.Korean;
 end;
 

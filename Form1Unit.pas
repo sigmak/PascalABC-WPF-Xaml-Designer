@@ -58,7 +58,7 @@ uses
 //               자동으로 바뀝니다.
 // =============================================================================
 const
-  APP_VERSION = '2.2.9';
+  APP_VERSION = '2.2.10';
   APP_TITLE   = 'PascalABC-WPF-Designer';
 
 // =============================================================================
@@ -1114,7 +1114,6 @@ begin
   fNavList.Dock        := System.Windows.Forms.DockStyle.Fill;
   fNavList.Font        := new System.Drawing.Font('Segoe UI', 9);
   fNavList.BorderStyle := System.Windows.Forms.BorderStyle.None;
-  //fNavList.BackColor   := System.Drawing.Color.FromArgb(240, 240, 245);
   fNavList.ItemHeight  := 30;
   fNavList.Items.Add(TLoc.S('dlg.projectoptions.nav.info')); //'  🏷  프로젝트 정보'
   fNavList.Items.Add(TLoc.S('dlg.projectoptions.nav.compiler')); //'  🔧  컴파일러'
@@ -1649,15 +1648,7 @@ begin
   except
     on ex: System.Exception do
     begin
-{      
-      AppendOutput(TLoc.F('msg.error.save_file', [ex.Message]), true);
-      System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.save_file', [ex.Message]),
-        TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
-        System.Windows.Forms.MessageBoxIcon.Error);
-}
-      // ✅ 수정
       AppendOutput(TLoc.F('msg.error.save_file', ex.Message), true);
-      // ✅ 수정
       System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.save_file', ex.Message),
         TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
         System.Windows.Forms.MessageBoxIcon.Error);
@@ -1731,15 +1722,7 @@ begin
   except
     on ex: System.Exception do
     begin
-{      
-      AppendOutput(TLoc.F('msg.error.build_start', [ex.Message]), true);
-      System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.build_start', [ex.Message]),
-        TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
-        System.Windows.Forms.MessageBoxIcon.Error);
-}
-      // ✅ 수정
       AppendOutput(TLoc.F('msg.error.build_start', ex.Message), true);
-      // ✅ 수정
       System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.build_start', ex.Message),
         TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
         System.Windows.Forms.MessageBoxIcon.Error);        
@@ -1853,15 +1836,7 @@ begin
   except
     on ex: System.Exception do
     begin
-{     
-      AppendOutput(TLoc.F('msg.error.run', [ex.Message]), true);
-      System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.run', [ex.Message]),
-        TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
-        System.Windows.Forms.MessageBoxIcon.Error);
-}
-      // ✅ 수정
       AppendOutput(TLoc.F('msg.error.run', ex.Message), true);   
-      // ✅ 수정
       System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.run', ex.Message),
         TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
         System.Windows.Forms.MessageBoxIcon.Error);        
@@ -1977,15 +1952,7 @@ begin
   except
     on ex: System.Exception do
     begin
-{      
-      AppendOutput(TLoc.F('msg.error.test_host_run', [ex.Message]), true);
-      System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.test_host_run', [ex.Message]),
-        TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
-        System.Windows.Forms.MessageBoxIcon.Error);
-}
-      // ✅ 수정
       AppendOutput(TLoc.F('msg.error.test_host_run', ex.Message), true);
-      // ✅ 수정
       System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.test_host_run', ex.Message),
         TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
         System.Windows.Forms.MessageBoxIcon.Error);
@@ -3004,12 +2971,6 @@ begin
   except
     on ex: System.Exception do
     begin
-{      
-      System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.xaml_preprocess', [ex.Message]),
-        TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
-        System.Windows.Forms.MessageBoxIcon.Error);
-}
-      // ✅ 수정
       System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.xaml_preprocess', ex.Message),
         TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
         System.Windows.Forms.MessageBoxIcon.Error);
@@ -3022,12 +2983,6 @@ begin
     try LoadDesigner(designXaml);
     except
       on ex: System.Exception do
-{        
-        System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.xaml_load', [ex.Message]),
-          TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
-          System.Windows.Forms.MessageBoxIcon.Error);
-}
-      // ✅ 수정
       System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.xaml_load', ex.Message),
         TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
         System.Windows.Forms.MessageBoxIcon.Error);
@@ -4890,12 +4845,6 @@ begin
   begin t := asms[i].GetType(tname); i += 1; end;
   if t = nil then
   begin
-{   
-    System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.type_not_found', [tname]),
-      TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
-      System.Windows.Forms.MessageBoxIcon.Error);
-}
-      // ✅ 수정
     System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.type_not_found', tname),
       TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
       System.Windows.Forms.MessageBoxIcon.Error);
@@ -4923,12 +4872,6 @@ begin
     SyncXamlEditor();
   except
     on ex: System.Exception do
-{      
-      System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.add_control', [ex.Message]),
-        TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
-        System.Windows.Forms.MessageBoxIcon.Error);
-}
-      // ✅ 수정
       System.Windows.Forms.MessageBox.Show(TLoc.F('msg.error.add_control', ex.Message),
         TLoc.S('title.error'), System.Windows.Forms.MessageBoxButtons.OK,
         System.Windows.Forms.MessageBoxIcon.Error);

@@ -21,12 +21,27 @@
 //   사용법
 //   ------
 //   if TVersionResourcePatcher.TryPatch(exePath, options, errMsg) then ...
+//
+// ★ 리팩토링 (구조 정리):
+//   - VS_VERSIONINFO 하위 블록(StringEntry/StringFileInfo/VarFileInfo/전체 리소스)마다
+//     "ToArray() 후 앞 2바이트에 길이 되돌려쓰기" 코드가 6번 반복되어 있던 것을
+//     PatchLength 헬퍼로 통합. (길이 필드 하나만 패치를 빼먹는 실수 방지)
+//   - StringFileInfo 자식 항목(entries)을 고정 크기 배열 + 수동 인덱스 증가 방식에서
+//     List<array of byte> 로 교체. 항목 추가 시 배열 길이(SetLength 8) 를 맞춰줄
+//     필요가 없어짐.
+//   - LangID($0409)/Codepage($04B0) 매직넘버가 문자열 테이블 키와 UpdateResourceW
+//     호출 두 곳에 따로 박혀 있던 것을 이름 있는 상수로 통합.
+//   - TryPatch 의 "파일 잠금 해제 대기용 재시도 루프"를 BeginUpdateResourceWithRetry
+//     로 분리해 TryPatch 자체는 절차 흐름만 보이도록 정리.
+//   - uses 절에 이미 System.Runtime.InteropServices 가 있으므로 Marshal 호출부의
+//     불필요한 전체 네임스페이스 표기를 제거.
 // =============================================================================
 
 uses
   System,
   System.IO,
   System.Text,
+  System.Collections.Generic,
   System.Runtime.InteropServices,
   ProjectOptions;        // TProjectOptions
 
@@ -48,9 +63,19 @@ function Win32_EndUpdateResourceW(hUpdate: IntPtr;
   external 'kernel32.dll' name 'EndUpdateResourceW';
 
 const
-  RT_VERSION : UInt16 = 16;
-  VS_FFI_SIGNATURE   : UInt32 = $FEEF04BD;
-  VS_FFI_STRUCVERSION: UInt32 = $00010000;
+  RT_VERSION         : UInt16 = 16;
+  VS_FFI_SIGNATURE    : UInt32 = $FEEF04BD;
+  VS_FFI_STRUCVERSION : UInt32 = $00010000;
+
+  // 문자열 테이블 로케일 및 UpdateResourceW 호출에 공통으로 쓰이는 언어/코드페이지.
+  // 예전에는 '040904B0' 문자열과 UpdateResourceW 의 $0409 가 서로 다른 곳에
+  // 매직넘버로 따로 박혀 있어 둘 중 하나만 바뀌면 리소스가 어긋날 수 있었다.
+  LANGID_EN_US        : UInt16 = $0409;
+  CODEPAGE_UNICODE     : UInt16 = $04B0;   // 1200(유니코드) 의 16진수 표기
+  STRINGTABLE_LANGCP_HEX = '040904B0';     // LANGID_EN_US + CODEPAGE_UNICODE 조합 (고정 16진 텍스트)
+
+  BEGIN_UPDATE_MAX_RETRY = 10;
+  BEGIN_UPDATE_RETRY_DELAY_MS = 100;
 
 type
   TVersionResourcePatcher = class
@@ -61,12 +86,14 @@ type
     class procedure WriteDWord(stream: System.IO.MemoryStream; v: UInt32);
     class procedure WritePadding(stream: System.IO.MemoryStream);
     class procedure WriteWideStringZ(stream: System.IO.MemoryStream; s: string);
+    class procedure PatchLength(bytes: array of byte);
     class function BuildStringEntry(key, value: string): array of byte;
     class function BuildStringFileInfo(entries: array of array of byte): array of byte;
     class function BuildVarFileInfo: array of byte;
     class function BuildVersionInfoResource(opt: TProjectOptions): array of byte;
     class procedure ParseVersionParts(verStr: string;
       var p1, p2, p3, p4: UInt16);
+    class function BeginUpdateResourceWithRetry(targetFilePath: string): IntPtr;
 
   public
     class function TryPatch(targetFilePath: string; opt: TProjectOptions;
@@ -120,16 +147,24 @@ begin
   stream.Write(bytes, 0, bytes.Length);
 end;
 
+// VS_VERSIONINFO 계열 블록은 전부 "앞 2바이트 = 자기 자신을 포함한 전체 길이(wLength)"
+// 구조라서, ToArray() 직후 항상 같은 패치가 필요하다. 여기 한 곳으로 모아둔다.
+// (bytes 는 .NET 배열 참조이므로 내부에서 수정하면 호출 측 배열에도 그대로 반영된다.)
+class procedure TVersionResourcePatcher.PatchLength(bytes: array of byte);
+begin
+  bytes[0] := byte(bytes.Length and $FF);
+  bytes[1] := byte((bytes.Length shr 8) and $FF);
+end;
+
 class function TVersionResourcePatcher.BuildStringEntry(key, value: string): array of byte;
 var
   ms       : System.IO.MemoryStream;
   valueLen : integer;
-  totalLen : UInt16;
 begin
   ms := new System.IO.MemoryStream();
   valueLen := value.Length + 1;
 
-  WriteWord(ms, 0);               // wLength (나중에 패치)
+  WriteWord(ms, 0);               // wLength (PatchLength 로 나중에 패치)
   WriteWord(ms, UInt16(valueLen)); // wValueLength (WCHAR 단위)
   WriteWord(ms, 1);               // wType = 1 (텍스트)
   WriteWideStringZ(ms, key);      // szKey
@@ -138,9 +173,7 @@ begin
   WritePadding(ms);               // 다음 항목을 위한 4바이트 정렬
 
   Result := ms.ToArray();
-  totalLen := UInt16(Result.Length);
-  Result[0] := byte(totalLen and $FF);
-  Result[1] := byte((totalLen shr 8) and $FF);
+  PatchLength(Result);
 end;
 
 class function TVersionResourcePatcher.BuildStringFileInfo(
@@ -148,68 +181,60 @@ class function TVersionResourcePatcher.BuildStringFileInfo(
 var
   msTable, msInfo      : System.IO.MemoryStream;
   e                    : array of byte;
-  tableBytes, infoBytes: array of byte;
+  tableBytes           : array of byte;
 begin
   msTable := new System.IO.MemoryStream();
-  WriteWord(msTable, 0);  // wLength (나중에 패치)
+  WriteWord(msTable, 0);  // wLength (PatchLength 로 나중에 패치)
   WriteWord(msTable, 0);  // wValueLength = 0
   WriteWord(msTable, 1);  // wType = 1
-  WriteWideStringZ(msTable, '040904B0');
+  WriteWideStringZ(msTable, STRINGTABLE_LANGCP_HEX);
   WritePadding(msTable);
   foreach e in entries do
     msTable.Write(e, 0, e.Length);
 
   tableBytes := msTable.ToArray();
-  tableBytes[0] := byte(tableBytes.Length and $FF);
-  tableBytes[1] := byte((tableBytes.Length shr 8) and $FF);
+  PatchLength(tableBytes);
 
   msInfo := new System.IO.MemoryStream();
-  WriteWord(msInfo, 0);  // wLength (나중에 패치)
+  WriteWord(msInfo, 0);  // wLength (PatchLength 로 나중에 패치)
   WriteWord(msInfo, 0);  // wValueLength = 0
   WriteWord(msInfo, 1);  // wType = 1
   WriteWideStringZ(msInfo, 'StringFileInfo');
   WritePadding(msInfo);
   msInfo.Write(tableBytes, 0, tableBytes.Length);
 
-  infoBytes := msInfo.ToArray();
-  infoBytes[0] := byte(infoBytes.Length and $FF);
-  infoBytes[1] := byte((infoBytes.Length shr 8) and $FF);
-
-  Result := infoBytes;
+  Result := msInfo.ToArray();
+  PatchLength(Result);
 end;
 
 class function TVersionResourcePatcher.BuildVarFileInfo: array of byte;
 var
-  msVar, msTrans      : System.IO.MemoryStream;
-  transBytes, varBytes: array of byte;
+  msVar, msTrans : System.IO.MemoryStream;
+  transBytes     : array of byte;
 begin
   msTrans := new System.IO.MemoryStream();
-  WriteWord(msTrans, 0);  // wLength
+  WriteWord(msTrans, 0);  // wLength (PatchLength 로 나중에 패치)
   WriteWord(msTrans, 4);  // wValueLength = 4바이트(DWORD 1개)
   WriteWord(msTrans, 0);  // wType = 0 (바이너리)
   WriteWideStringZ(msTrans, 'Translation');
   WritePadding(msTrans);
-  WriteWord(msTrans, $0409); // langID
-  WriteWord(msTrans, $04B0); // codepage(1200=유니코드)
+  WriteWord(msTrans, LANGID_EN_US);
+  WriteWord(msTrans, CODEPAGE_UNICODE);
   WritePadding(msTrans);
 
   transBytes := msTrans.ToArray();
-  transBytes[0] := byte(transBytes.Length and $FF);
-  transBytes[1] := byte((transBytes.Length shr 8) and $FF);
+  PatchLength(transBytes);
 
   msVar := new System.IO.MemoryStream();
-  WriteWord(msVar, 0);  // wLength
+  WriteWord(msVar, 0);  // wLength (PatchLength 로 나중에 패치)
   WriteWord(msVar, 0);  // wValueLength = 0
   WriteWord(msVar, 1);  // wType = 1
   WriteWideStringZ(msVar, 'VarFileInfo');
   WritePadding(msVar);
   msVar.Write(transBytes, 0, transBytes.Length);
 
-  varBytes := msVar.ToArray();
-  varBytes[0] := byte(varBytes.Length and $FF);
-  varBytes[1] := byte((varBytes.Length shr 8) and $FF);
-
-  Result := varBytes;
+  Result := msVar.ToArray();
+  PatchLength(Result);
 end;
 
 class procedure TVersionResourcePatcher.ParseVersionParts(verStr: string;
@@ -238,15 +263,13 @@ var
   ms             : System.IO.MemoryStream;
   // ★ AddEntry 중첩 프로시저 제거 — 외부 변수 캡처 시 PascalABC.NET 이
   //   잘못된 IL 을 생성해 "invalid program" 오류를 유발하므로 인라인으로 전개
-  stringEntries  : array of array of byte;
-  entryCount     : integer;
+  stringEntries  : List<array of byte>;
   stringFileInfo : array of byte;
   varFileInfo    : array of byte;
   fileVerHi, fileVerLo, prodVerHi, prodVerLo: UInt32;
   p1, p2, p3, p4: UInt16;
   productName    : string;
   title, company, copyrightTxt, version: string;
-  totalLen       : UInt32;
 begin
   title        := (if opt.AssemblyTitle.Trim()   <> '' then opt.AssemblyTitle.Trim()   else opt.ProjectName);
   company      := opt.AssemblyCompany.Trim();
@@ -260,33 +283,26 @@ begin
   prodVerHi := fileVerHi;
   prodVerLo := fileVerLo;
 
-  // ── StringFileInfo 자식 항목 구성 (AddEntry 인라인 전개) ──
-  SetLength(stringEntries, 8);
-  entryCount := 0;
-
-  stringEntries[entryCount] := BuildStringEntry('FileVersion',      version);      entryCount += 1;
-  stringEntries[entryCount] := BuildStringEntry('ProductVersion',   version);      entryCount += 1;
-  stringEntries[entryCount] := BuildStringEntry('ProductName',      productName);  entryCount += 1;
-  stringEntries[entryCount] := BuildStringEntry('FileDescription',  title);        entryCount += 1;
-  stringEntries[entryCount] := BuildStringEntry('InternalName',     productName);  entryCount += 1;
-  stringEntries[entryCount] := BuildStringEntry('OriginalFilename', productName + '.exe'); entryCount += 1;
+  // ── StringFileInfo 자식 항목 구성 ──
+  // List 사용으로 고정 크기(SetLength 8) 를 맞춰줄 필요가 없어짐 —
+  // 항목을 추가/삭제해도 이 부분만 고치면 된다.
+  stringEntries := new List<array of byte>();
+  stringEntries.Add(BuildStringEntry('FileVersion',      version));
+  stringEntries.Add(BuildStringEntry('ProductVersion',   version));
+  stringEntries.Add(BuildStringEntry('ProductName',      productName));
+  stringEntries.Add(BuildStringEntry('FileDescription',  title));
+  stringEntries.Add(BuildStringEntry('InternalName',     productName));
+  stringEntries.Add(BuildStringEntry('OriginalFilename', productName + '.exe'));
   if company <> '' then
-  begin
-    stringEntries[entryCount] := BuildStringEntry('CompanyName', company);
-    entryCount += 1;
-  end;
+    stringEntries.Add(BuildStringEntry('CompanyName', company));
   if copyrightTxt <> '' then
-  begin
-    stringEntries[entryCount] := BuildStringEntry('LegalCopyright', copyrightTxt);
-    entryCount += 1;
-  end;
-  SetLength(stringEntries, entryCount);
+    stringEntries.Add(BuildStringEntry('LegalCopyright', copyrightTxt));
 
-  stringFileInfo := BuildStringFileInfo(stringEntries);
+  stringFileInfo := BuildStringFileInfo(stringEntries.ToArray());
   varFileInfo    := BuildVarFileInfo();
 
   ms := new System.IO.MemoryStream();
-  WriteWord(ms, 0);    // wLength (나중에 패치)
+  WriteWord(ms, 0);    // wLength (PatchLength 로 나중에 패치)
   WriteWord(ms, 52);   // wValueLength = sizeof(VS_FIXEDFILEINFO)
   WriteWord(ms, 0);    // wType = 0 (바이너리)
   WriteWideStringZ(ms, 'VS_VERSION_INFO');
@@ -312,9 +328,32 @@ begin
   ms.Write(varFileInfo,    0, varFileInfo.Length);
 
   Result := ms.ToArray();
-  totalLen := UInt32(Result.Length);
-  Result[0] := byte(totalLen and $FF);
-  Result[1] := byte((totalLen shr 8) and $FF);
+  PatchLength(Result);
+end;
+
+// BeginUpdateResourceW 는 Wide(UTF-16) 경로를 요구한다.
+// PascalABC.NET P/Invoke 가 string 을 ANSI 로 마샬링할 수 있으므로
+// Marshal.StringToHGlobalUni 로 직접 변환해서 넘긴다.
+// 빌드 프로세스 종료 직후 OS 잠금 해제까지 시간이 걸리므로 최대 BEGIN_UPDATE_MAX_RETRY 회 재시도.
+class function TVersionResourcePatcher.BeginUpdateResourceWithRetry(targetFilePath: string): IntPtr;
+var
+  pFileName : IntPtr;
+  retryIdx  : integer;
+begin
+  Result := IntPtr.Zero;
+  pFileName := Marshal.StringToHGlobalUni(targetFilePath);
+  try
+    retryIdx := 0;
+    while retryIdx < BEGIN_UPDATE_MAX_RETRY do
+    begin
+      Result := Win32_BeginUpdateResourceW(pFileName, false);
+      if Result <> IntPtr.Zero then break;
+      System.Threading.Thread.Sleep(BEGIN_UPDATE_RETRY_DELAY_MS);
+      retryIdx += 1;
+    end;
+  finally
+    Marshal.FreeHGlobal(pFileName);
+  end;
 end;
 
 class function TVersionResourcePatcher.TryPatch(targetFilePath: string;
@@ -350,53 +389,36 @@ begin
     end;
   end;
 
-  // BeginUpdateResourceW 는 Wide(UTF-16) 경로를 요구한다.
-  // PascalABC.NET P/Invoke 가 string 을 ANSI 로 마샬링할 수 있으므로
-  // Marshal.StringToHGlobalUni 로 직접 변환해서 넘긴다.
-  // 빌드 프로세스 종료 직후 OS 잠금 해제까지 시간이 걸리므로 최대 10회 재시도.
-  var pFileName := System.Runtime.InteropServices.Marshal.StringToHGlobalUni(targetFilePath);
-  try
-    hUpdate := IntPtr.Zero;
-    var retryIdx := 0;
-    while retryIdx < 10 do
-    begin
-      hUpdate := Win32_BeginUpdateResourceW(pFileName, false);
-      if hUpdate <> IntPtr.Zero then break;
-      System.Threading.Thread.Sleep(100);
-      retryIdx += 1;
-    end;
-  finally
-    System.Runtime.InteropServices.Marshal.FreeHGlobal(pFileName);
-  end;
+  hUpdate := BeginUpdateResourceWithRetry(targetFilePath);
   if hUpdate = IntPtr.Zero then
   begin
     errorMessage := 'BeginUpdateResource 실패 (코드 ' +
-      System.Runtime.InteropServices.Marshal.GetLastWin32Error().ToString() + ')';
+      Marshal.GetLastWin32Error().ToString() + ')';
     exit;
   end;
 
-  pData := System.Runtime.InteropServices.Marshal.AllocHGlobal(resBytes.Length);
+  pData := Marshal.AllocHGlobal(resBytes.Length);
   try
-    System.Runtime.InteropServices.Marshal.Copy(resBytes, 0, pData, resBytes.Length);
+    Marshal.Copy(resBytes, 0, pData, resBytes.Length);
 
     ok := Win32_UpdateResourceW(hUpdate, MakeIntResource(RT_VERSION),
-      MakeIntResource(1), $0409, pData, UInt32(resBytes.Length));
+      MakeIntResource(1), LANGID_EN_US, pData, UInt32(resBytes.Length));
 
     if not ok then
     begin
       errorMessage := 'UpdateResource 실패 (코드 ' +
-        System.Runtime.InteropServices.Marshal.GetLastWin32Error().ToString() + ')';
+        Marshal.GetLastWin32Error().ToString() + ')';
       Win32_EndUpdateResourceW(hUpdate, true);
       exit;
     end;
   finally
-    System.Runtime.InteropServices.Marshal.FreeHGlobal(pData);
+    Marshal.FreeHGlobal(pData);
   end;
 
   if not Win32_EndUpdateResourceW(hUpdate, false) then
   begin
     errorMessage := 'EndUpdateResource 실패 (코드 ' +
-      System.Runtime.InteropServices.Marshal.GetLastWin32Error().ToString() + ')';
+      Marshal.GetLastWin32Error().ToString() + ')';
     exit;
   end;
 

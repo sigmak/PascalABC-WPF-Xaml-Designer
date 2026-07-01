@@ -19,6 +19,8 @@
     <Item Type="SourceFile" Name="IntelliSenseUnit.pas" Path="IntelliSenseUnit.pas" />
     <Item Type="SourceFile" Name="NamespaceReflection.pas" Path="NamespaceReflection.pas" />
     <Item Type="SourceFile" Name="ProjectFile.pas" Path="ProjectFile.pas" />
+    <Item Type="SourceFile" Name="DockContents.pas" Path="DockContents.pas" />
+    <Item Type="SourceFile" Name="VersionResourcePatcher.pas" Path="VersionResourcePatcher.pas" />
     <Item Type="Reference" AssemblyName="System" FullAssemblyName="System.dll" />
     <Item Type="Reference" AssemblyName="System.Windows.Forms" FullAssemblyName="System.Windows.Forms.dll" />
     <Item Type="Reference" AssemblyName="System.Drawing" FullAssemblyName="System.Drawing.dll" />
